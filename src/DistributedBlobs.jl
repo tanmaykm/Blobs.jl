@@ -1,5 +1,32 @@
 module DistributedBlobs
 
-# package code goes here
+using Base.Random: UUID, uuid4
+import Base: serialize, deserialize, append!
+
+export Locality, StrongLocality, WeakLocality
+export Mutability, Mutable, Immutable
+export Node, NodeMap, nodeids, addnode, localto, islocal
+export BlobMeta, TypedMeta, FileMeta, FunctionMeta
+export BlobIO, NoopBlobIO, FileBlobIO, FunctionBlobIO
+export Blob, BlobCollection, blobids, load, save, serialize, deserialize, register, deregister, append!
+
+# enable logging only during debugging
+using Logging
+const logger = Logging.configure(level=DEBUG)
+#const logger = Logging.configure(filename="/tmp/blobs$(getpid()).log", level=DEBUG)
+macro logmsg(s)
+    quote
+        debug($(esc(s)))
+    end
+end
+#macro logmsg(s)
+#end
+
+
+include("cache/blobcache.jl")
+using .BlobCache
+
+include("attributes.jl")
+include("blob.jl")
 
 end # module
