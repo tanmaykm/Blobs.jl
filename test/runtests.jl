@@ -1,4 +1,4 @@
-using DistributedBlobs
+using Blobs
 using Base.Test
 
 include("test_attributes.jl")

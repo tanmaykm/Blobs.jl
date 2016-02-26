@@ -1,6 +1,6 @@
-@everywhere using DistributedBlobs
+@everywhere using Blobs
 @everywhere using Base.Test
-@everywhere import DistributedBlobs: @logmsg
+@everywhere import Blobs: @logmsg
 
 function create_rand_file_backed_blob{T,L}(::Type{T}, ::Type{L}, sz::Int, nodeid::Int)
     meta = TypedMeta(FileBlobIO => FileMeta(tempname(), 0, sizeof(T)*sz), FunctionBlobIO => FunctionMeta((sizeof(T)*sz,)))
@@ -46,12 +46,11 @@ function read_blob_collection{T,L}(::Type{T}, ::Type{L}, sz::Int, bcfile)
     @logmsg("read into blob collection: $collid")
 
     # load all blobs
-    x = @parallel for blobid in bids
+    @parallel for blobid in bids
         d = load(collid, blobid)
         println("loaded $collid -> $blobid")
         @test length(d) == sz
     end
-    println(fetch(x[1]))
     @logmsg("loaded blobs")
     coll
 end
