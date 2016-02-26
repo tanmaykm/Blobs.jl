@@ -7,16 +7,16 @@ type FileMeta <: BlobMeta
 end
 
 type FunctionMeta <: BlobMeta
-    param::Any
-    size::Int
+    params::Tuple
 end
 
 # Typed meta holds multiple metadata for different reader types.
 # Reader types have predefined mapping to metadata types
+# TODO: rename MetaCollection
 type TypedMeta <: BlobMeta
     metadict::Dict{Type,BlobMeta}
-    function TypedMeta()
-        new(Dict{Type,BlobMeta}())
+    function TypedMeta(m...)
+        new(Dict{Type,BlobMeta}(m...))
     end
 end
 
@@ -57,13 +57,9 @@ end
 # function outputs have strong locality only to the pid
 locality(::Type{FunctionBlobIO}, nodemap::NodeMap=DEF_NODE_MAP) = StrongLocality(myid())
 
-function load(meta::FunctionMeta, fnio::FunctionBlobIO)
-    databytes = Array(UInt8, meta.size)
-    fnio.reader(databytes, meta.param)
-    databytes
-end
+load(meta::FunctionMeta, fnio::FunctionBlobIO) = fnio.reader(meta.params...)
 function save(databytes::Vector{UInt8}, meta::FunctionMeta, fnio::FunctionBlobIO)
-    fnio.writer(databytes, meta.param)
+    fnio.writer(databytes, meta.params...)
     nothing
 end
 
@@ -75,7 +71,7 @@ type Blob{T,L}
     data::WeakRef
 end
 Blob{T,L}(::Type{T}, metadata::BlobMeta, locality::L, id::UUID=uuid4()) = Blob{T,L}(id, metadata, locality, WeakRef())
-Blob{T,L}(::Type{T}, ::Type{L}, metadata::BlobMeta, id::UUID=uuid4()) = Blob{T,L}(id, metadata, L(), WeakRef())
+Blob{T,L}(::Type{T}, ::Type{L}, metadata::BlobMeta, nodeid::Union{Int,Vector,Tuple}=myid(), id::UUID=uuid4()) = Blob{T,L}(id, metadata, L(nodeid...), WeakRef())
 
 function serialize(s::SerializationState, blob::Blob)
     Serializer.serialize_type(s, typeof(blob))
@@ -119,11 +115,24 @@ BlobCollection(id::UUID) = BLOB_REGISTRY[id]
 
 const BLOB_REGISTRY = Dict{UUID,BlobCollection}()
 function register(coll::BlobCollection)
+    @logmsg("registering coll $(coll.id) with $(length(coll.blobs)) blobs")
     BLOB_REGISTRY[coll.id] = coll
     nothing
 end
+function register(coll::BlobCollection, wrkrs::Vector{Int})
+    @sync for w in wrkrs
+        @async remotecall_wait(register, w, coll)
+    end
+end
+
 deregister(coll::BlobCollection) = deregister(coll.id)
 deregister(coll::UUID) = delete!(BLOB_REGISTRY, coll)
+function deregister(coll::BlobCollection, wrkrs::Vector{Int})
+    @sync for w in wrkrs
+        @async remotecall_wait(deregister, w, coll)
+    end
+end
+
 append!(coll::UUID, blob::Blob) = append!(BlobCollection(id::UUID), blob)
 function append!(coll::BlobCollection, blob::Blob)
     coll.blobs[blob.id] = blob
@@ -135,6 +144,11 @@ blobids(coll::BlobCollection) = keys(coll.blobs)
 # Save just stores the list of blobs and their metadata.
 # When loaded in a different environment, the mutability and reader types, and the nodemap may be different.
 # Load needs to be provided with a compatible BlobCollection to read the blob contents.
+function load(coll::BlobCollection, filename::AbstractString)
+    open(filename) do f
+        load(coll, f)
+    end
+end
 function load(coll::BlobCollection, io::IO)
     blobs = deserialize(io)
     for blob in values(blobs)
@@ -142,10 +156,22 @@ function load(coll::BlobCollection, io::IO)
     end
     coll
 end
-save(collid::UUID, io::IO) = save(BlobCollection(collid), io)
-function save(coll::BlobCollection, io::IO)
-    save(coll)
+save(collid::UUID, io::IO, wrkrs::Vector{Int}) = save(BlobCollection(collid), io, wrkrs)
+function save(coll::BlobCollection, filename::AbstractString, wrkrs::Vector{Int})
+    open(filename, "w") do f
+        save(coll, f, wrkrs)
+    end
+end
+function save(coll::BlobCollection, io::IO, wrkrs::Vector{Int})
+    save(coll, wrkrs)
     serialize(SerializationState(io), coll.blobs)
+    coll
+end
+save(coll::BlobCollection, wrkrs::Vector{Int}) = save(coll.id, wrkrs)
+function save(collid::UUID, wrkrs::Vector{Int})
+    @sync for w in wrkrs
+        @async remotecall_wait(save, w, collid)
+    end
 end
 save(collid::UUID) = save(BlobCollection(collid))
 function save(coll::BlobCollection)
@@ -184,6 +210,7 @@ function load_local{T,R}(coll::BlobCollection{T,R}, blob::Blob{T})
     (coll.cache[blob.id])::Vector{T}
 end
 
+load(collid::UUID, blobid::UUID) = load(BlobCollection(collid), blobid)
 load(coll::BlobCollection, blobid::UUID) = load(coll, coll.blobs[blobid])
 load{T,R,L<:WeakLocality}(coll::BlobCollection{T,R}, blob::Blob{T,L}) = load_local(coll, blob)
 function load{T,R,L<:StrongLocality}(coll::BlobCollection{T,R}, blob::Blob{T,L})
