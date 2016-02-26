@@ -1,6 +1,9 @@
-module DistributedBlobs
+module Blobs
+
+using Compat
 
 using Base.Random: UUID, uuid4
+using Base: IPAddr
 import Base: serialize, deserialize, append!
 
 export Locality, StrongLocality, WeakLocality
@@ -11,16 +14,16 @@ export BlobIO, NoopBlobIO, FileBlobIO, FunctionBlobIO
 export Blob, BlobCollection, blobids, load, save, serialize, deserialize, register, deregister, append!
 
 # enable logging only during debugging
-using Logging
-const logger = Logging.configure(level=DEBUG)
-#const logger = Logging.configure(filename="/tmp/blobs$(getpid()).log", level=DEBUG)
-macro logmsg(s)
-    quote
-        debug($(esc(s)))
-    end
-end
+#using Logging
+#const logger = Logging.configure(level=DEBUG)
+##const logger = Logging.configure(filename="/tmp/blobs$(getpid()).log", level=DEBUG)
 #macro logmsg(s)
+#    quote
+#        debug($(esc(s)))
+#    end
 #end
+macro logmsg(s)
+end
 
 
 include("cache/blobcache.jl")

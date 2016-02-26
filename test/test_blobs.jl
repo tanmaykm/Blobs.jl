@@ -1,79 +1,61 @@
-@everywhere using DistributedBlobs
+@everywhere using Blobs
 @everywhere using Base.Test
-@everywhere import DistributedBlobs: @logmsg
+@everywhere import Blobs: @logmsg
 
-function create_temp_file_blob{T,L}(nodemap::NodeMap, ::Type{T}, ::Type{L}, sz::Int, nodeid::Int)
-    locality = L(localto(nodeid, nodemap))
-    fmeta = FileMeta(tempname(), 0, sizeof(T)*sz)
-    Blob(T, fmeta, locality)
+function create_rand_file_backed_blob{T,L}(::Type{T}, ::Type{L}, sz::Int, nodeid::Int)
+    meta = TypedMeta(FileBlobIO => FileMeta(tempname(), 0, sizeof(T)*sz), FunctionBlobIO => FunctionMeta((sizeof(T)*sz,)))
+    Blob(T, L, meta, nodeid)
 end
 
-function create_rand_blob{T,L}(nodemap::NodeMap, ::Type{T}, ::Type{L}, sz::Int, nodeid::Int)
-    locality = L((nodeid))
-    fmeta = FunctionMeta(T, sz)
-    Blob(T, fmeta, locality)
-end
-
-function create_rand_file_blob{T,L}(nodemap::NodeMap, ::Type{T}, ::Type{L}, sz::Int, nodeid::Int)
-    locality = L(nodeid)
-    typedmeta = TypedMeta()
-    typedmeta.metadict[FileBlobIO] = FileMeta(tempname(), 0, sizeof(T)*sz)
-    typedmeta.metadict[FunctionBlobIO] = FunctionMeta(T, sizeof(T)*sz)
-    Blob(T, typedmeta, locality)
-end
-
-function create_blob_collection{T,L}(nodemap::NodeMap, ::Type{T}, ::Type{L}, sz::Int)
-    mutability = Mutable(sz*sizeof(T), FileBlobIO())
-    reader = FunctionBlobIO((b,p)->rand!(reinterpret(p,b)), (b,p)->error("only reader"))
-    coll = BlobCollection(Int64, mutability, reader, 10, nodemap)
-    @logmsg("created blob collection: $(coll.id)")
-
+function create_blob_collection{T,L}(::Type{T}, ::Type{L}, sz::Int)
     # have a random number generator as reader and save to file
-    for nodeid in nodeids(nodemap)
-        blob = create_rand_file_blob(nodemap, Int64, StrongLocality, sz, nodeid)
-        @logmsg("appending blob $blob")
+    mut = Mutable(sz*sizeof(T), FileBlobIO())
+    reader = FunctionBlobIO((p)->rand(T, p))
+    coll = BlobCollection(T, mut, reader)
+
+    # create a blob for each worker
+    for nodeid in workers()
+        blob = create_rand_file_backed_blob(T, StrongLocality, sz, nodeid)
         append!(coll, blob)
     end
+    bids = collect(blobids(coll))
+    register(coll, workers())
+    collid = coll.id
+    @logmsg("created blob collection: $collid")
 
     # load all blobs
-    for blobid in blobids(coll)
-        load(coll, blobid)
+    @parallel for blobid in bids
+        load(collid, blobid)
+        println("initialized $collid -> $blobid")
     end
-    @logmsg("loaded all blobs")
+    @logmsg("initialized blobs")
 
     # save all blobs
     bcfile = tempname()
-    open(bcfile, "w") do fbcfile
-        save(coll, fbcfile)
-    end
-    @logmsg("saved all blobs. blob collection saved at $bcfile")
-    deregister(coll)
-    @logmsg("deregistered collection")
-    bcfile
+    save(coll, bcfile, workers())
+    @logmsg("saved blobs. blob collection saved at $bcfile")
+    bcfile, coll
 end
 
-function read_blob_collection{T,L}(nodemap::NodeMap, ::Type{T}, ::Type{L}, sz::Int, bcfile)
-    coll = BlobCollection(Int64, Immutable(sz*sizeof(T)), FileBlobIO(), 10, nodemap)
-    @logmsg("reading into blob collection: $(coll.id)")
-    open(bcfile) do fbcfile
-        load(coll, fbcfile)
-    end
-    @logmsg("read into blob collection: $(coll.id)")
-    for w in workers()
-        remotecall_wait(register, w, coll)
-    end
-    @logmsg("registered blob everywhere")
+function read_blob_collection{T,L}(::Type{T}, ::Type{L}, sz::Int, bcfile)
+    coll = load(BlobCollection(T, Immutable(sz*sizeof(T)), FileBlobIO()), bcfile)
+    register(coll, workers())
+
+    collid = coll.id
+    bids = collect(blobids(coll))
+    @logmsg("read into blob collection: $collid")
 
     # load all blobs
-    for blobid in blobids(coll)
-        d = load(coll, blobid)
+    @parallel for blobid in bids
+        d = load(collid, blobid)
+        println("loaded $collid -> $blobid")
         @test length(d) == sz
     end
-    @logmsg("loaded all blobs")
+    @logmsg("loaded blobs")
     coll
 end
 
-function cleanup_blob_collection(coll::BlobCollection)
+function cleanup_blob_collection(bcfile::AbstractString, coll::BlobCollection)
     @logmsg("cleaning up...")
     for blobid in blobids(coll)
         blob = coll.blobs[blobid]
@@ -81,16 +63,15 @@ function cleanup_blob_collection(coll::BlobCollection)
         rm(meta.filename)
         @logmsg("cleaned up blob $(meta.filename)")
     end
-    @logmsg("cleaned up all blobs")
-end
-
-function test_blob{T,L}(nodemap::NodeMap, ::Type{T}, ::Type{L}, sz::Int)
-    bcfile = create_blob_collection(nodemap, T, L, sz)
-    # load the blobs
-    coll = read_blob_collection(nodemap, T, L, sz, bcfile)
-    cleanup_blob_collection(coll)
     rm(bcfile)
-    @logmsg("cleaned up blob collection")
+    @logmsg("cleaned up blobs")
 end
 
-test_blob(DistributedBlobs.DEF_NODE_MAP, Int64, StrongLocality, 10240)
+function test_blob{T,L}(::Type{T}, ::Type{L}, sz::Int)
+    bcfile, coll = create_blob_collection(T, L, sz)         # create blob collection
+    deregister(coll, procs())                               # deregister blob collection
+    coll = read_blob_collection(T, L, sz, bcfile)           # restore the saved blob collection
+    cleanup_blob_collection(bcfile, coll)                   # clean up
+end
+
+test_blob(Int64, StrongLocality, 10240)

@@ -1,6 +1,6 @@
-# DistributedBlobs
+# Blobs
 
-[![Build Status](https://travis-ci.org/tanmaykm/DistributedBlobs.jl.svg?branch=master)](https://travis-ci.org/tanmaykm/DistributedBlobs.jl)
+[![Build Status](https://travis-ci.org/tanmaykm/Blobs.jl.svg?branch=master)](https://travis-ci.org/tanmaykm/Blobs.jl)
 
 ## Blob
 A blob of data, not necessarily materialized in RAM at all times. When not in RAM, the data is backed into some kind of persistent storage,

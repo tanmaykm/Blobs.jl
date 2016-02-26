@@ -1,4 +1,4 @@
-using DistributedBlobs
+using Blobs
 using Base.Test
 
 const iplist1 = [ip"54.204.24.10", ip"54.204.24.11"]

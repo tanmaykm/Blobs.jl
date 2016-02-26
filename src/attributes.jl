@@ -6,16 +6,18 @@ abstract BlobIO
 type NoopBlobIO <: BlobIO
 end
 
-type FileBlobIO <: BlobIO
+immutable FileBlobIO <: BlobIO
     use_mmap::Bool
     function FileBlobIO(use_mmap::Bool=false)
         new(use_mmap)
     end
 end
 
-type FunctionBlobIO <: BlobIO
+def_fn_writer(b,p...) = throw(InvalidStateException("IO configured only as", :reader))
+immutable FunctionBlobIO <: BlobIO
     reader::Function
     writer::Function
+    FunctionBlobIO(reader::Function, writer::Function=def_fn_writer) = new(reader, writer)
 end
 
 locality{T<:BlobIO}(io::T, nodemap=DEF_NODE_MAP) = locality(T, nodemap)
@@ -29,7 +31,7 @@ locality{T<:BlobIO}(io::T, nodemap=DEF_NODE_MAP) = locality(T, nodemap)
 defmutablespillcb(a...) = error("blob max size reached")
 defimmutablespillcb(a...) = error("blob is immutable")
 
-type Mutability{N}
+immutable Mutability{N}
     maxsize::Int
     writer::BlobIO
     spillcb::Function
@@ -38,8 +40,8 @@ type Mutability{N}
     end
 end
 
-typealias Immutable    Mutability{0}
-typealias Mutable      Mutability{1}
+typealias Immutable    Mutability{false}
+typealias Mutable      Mutability{true}
 
 ##
 # Blobs can be located at one or more processes, or physical nodes.
@@ -53,7 +55,6 @@ typealias Mutable      Mutability{1}
 #     - can be accessed from anywhere
 #     - may be preferably on some nodes
 #     - generally backed by some kind of distributed/shared storage and are not affected by compute node failures
-
 type Locality{N}
     nodes::Set{Int}
     ips::Set{IPAddr}
@@ -63,6 +64,7 @@ type Locality{N}
         nodes = Set{Int}()
         ips = Set{IPAddr}()
         hostnames = Set{AbstractString}()
+        isempty(locs) && (locs = localto(myid()))
         for loc in locs
             isa(loc, Integer) ? push!(nodes, loc) :
             isa(loc, IPAddr) ? push!(ips, loc) : push!(hostnames, string(loc)) 
@@ -71,8 +73,8 @@ type Locality{N}
     end
 end
 
-typealias WeakLocality      Locality{1}
-typealias StrongLocality    Locality{2}
+typealias WeakLocality      Locality{:weak}
+typealias StrongLocality    Locality{:strong}
 
 function islocal_broad(loc::Locality, attr)
     nodes, ips, hns = localto(attr)
