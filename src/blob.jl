@@ -25,7 +25,10 @@ save{T<:BlobIO}(databytes::Vector{UInt8}, meta::TypedMeta, writer::T) = save(dat
 
 # file blob io
 # files have strong locality to the machine
-locality(::Type{FileBlobIO}, nodemap::NodeMap=DEF_NODE_MAP) = StrongLocality(localto(myid(), nodemap)...)
+function locality(::Type{FileBlobIO}, nodemap::NodeMap=DEF_NODE_MAP)
+    nodes, ips, hns = localto(myid(), nodemap)
+    StrongLocality(nodes..., ips..., hns...)
+end
 
 function load(meta::FileMeta, reader::FileBlobIO)
     if reader.use_mmap
@@ -101,7 +104,7 @@ type BlobCollection{T, R<:BlobIO, M<:Mutability}
     cache::LRU{UUID,Vector{T}}
 end
 
-function BlobCollection{T,R<:BlobIO,M<:Mutability}(::Type{T}, mutability::M, reader::R, maxcache::Int=10, nodemap::NodeMap=DEF_NODE_MAP, id::UUID=uuid4())
+function BlobCollection{T,R<:BlobIO,M<:Mutability}(::Type{T}, mutability::M, reader::R; maxcache::Int=10, nodemap::NodeMap=DEF_NODE_MAP, id::UUID=uuid4())
     L = typeof(locality(reader))
     blobs = Dict{UUID,Blob{T,L}}()
     cache = LRU{UUID,Vector{T}}(maxcache)
@@ -133,10 +136,11 @@ function deregister(coll::BlobCollection, wrkrs::Vector{Int})
     end
 end
 
+append!{T,L}(coll::Union{UUID,BlobCollection}, ::Type{T}, blobmeta::BlobMeta, ::Type{L}) = append!(coll, Blob(T, L, blobmeta))
+append!{T}(coll::Union{UUID,BlobCollection}, ::Type{T}, blobmeta::BlobMeta, loc::Locality) = append!(coll, Blob(T, blobmeta, loc))
 append!(coll::UUID, blob::Blob) = append!(BlobCollection(id::UUID), blob)
 function append!(coll::BlobCollection, blob::Blob)
     coll.blobs[blob.id] = blob
-    nothing
 end
 blobids(coll::BlobCollection) = keys(coll.blobs)
 

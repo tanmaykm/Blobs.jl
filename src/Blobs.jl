@@ -3,6 +3,7 @@ module Blobs
 using Compat
 
 using Base.Random: UUID, uuid4
+using Base.Mmap: sync!
 using Base: IPAddr
 import Base: serialize, deserialize, append!
 
