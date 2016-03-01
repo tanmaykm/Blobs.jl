@@ -1,7 +1,7 @@
 module DenseArrayBlobs
 
 using Blobs
-import Blobs: @logmsg, load
+import Blobs: @logmsg, load, save
 using Base.Random: UUID
 import Base: serialize, deserialize, getindex, setindex!, size
 
@@ -17,14 +17,14 @@ type DenseMatBlobs{T,D,N} <: AbstractMatrix{T}
     metadir::AbstractString
     sz::Tuple
     splits::Vector{Pair}        # keep a mapping of index ranges to blobs
-    coll::BlobCollection{T}
+    coll::BlobCollection{Vector{T}}
 end
 
 size(dm::DenseMatBlobs) = dm.sz
 
 split_ranges(dm::DenseMatBlobs) = [p.first for p in dm.splits]
 
-function splitidx{T,D,N}(dm::DenseMatBlobs{T,D,N}, splitdim_idx::Int)
+function splitidx(dm::DenseMatBlobs, splitdim_idx::Int)
     for splitnum in 1:length(dm.splits)
         p = dm.splits[splitnum]
         range = p.first
@@ -109,6 +109,7 @@ function serialize(s::SerializationState, dm::DenseMatBlobs)
 end
 
 function deserialize{T,D,N}(s::SerializationState, ::Type{DenseMatBlobs{T,D,N}})
+    VT = Vector{T}
     sz = deserialize(s)
     splits = deserialize(s)
 
@@ -118,14 +119,15 @@ function deserialize{T,D,N}(s::SerializationState, ::Type{DenseMatBlobs{T,D,N}})
     coll_blobs = deserialize(s)
     coll_maxcache = deserialize(s)
 
-    coll = BlobCollection(T, coll_mut, coll_reader; maxcache=coll_maxcache, id=coll_id)
+    coll = BlobCollection(VT, coll_mut, coll_reader; maxcache=coll_maxcache, id=coll_id)
     coll.blobs = coll_blobs
     DenseMatBlobs{T,D,N}("", sz, splits, coll)
 end
 
 function DenseMatBlobs{T}(::Type{T}, splitdim::Int, sz::Tuple, metadir::AbstractString, max_size::Int=def_sz(T))
-    mut = Mutable(max_size, FileBlobIO(true))
-    coll = BlobCollection(T, mut, FileBlobIO(true))
+    VT = Vector{T}
+    mut = Mutable(max_size, FileBlobIO(VT, true))
+    coll = BlobCollection(VT, mut, FileBlobIO(VT, true))
 
     @logmsg("creating new dense mat blobs...")
     # create new
@@ -137,7 +139,7 @@ function DenseMatBlobs{T}(::Type{T}, splitdim::Int, sz::Tuple, metadir::Abstract
     while startidx <= sz[splitdim]
         idxrange = startidx:min(M, startidx + deltaM)
         meta = FileMeta(joinpath(metadir, string(length(splits)+1)), 0, length(idxrange)*N*sizeof(T))
-        blob = append!(coll, T, meta, StrongLocality(myid()))
+        blob = append!(coll, VT, meta, StrongLocality(myid()))
         push!(splits, idxrange => blob.id)
         startidx = last(idxrange) + 1
         @logmsg("created blob for range $idxrange")

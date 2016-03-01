@@ -2,25 +2,24 @@
 # Blob IO
 # Handles reading and writing from sources.
 # Writers are used only is blob is mutable.
-abstract BlobIO
-type NoopBlobIO <: BlobIO
+abstract BlobIO{T}
+type NoopBlobIO{T} <: BlobIO{T}
 end
+NoopBlobIO() = NoopBlobIO{Any}()
 
-immutable FileBlobIO <: BlobIO
+immutable FileBlobIO{T} <: BlobIO{T}
     use_mmap::Bool
-    function FileBlobIO(use_mmap::Bool=false)
-        new(use_mmap)
-    end
 end
+FileBlobIO{T}(::Type{T}, use_mmap::Bool=false) = FileBlobIO{T}(use_mmap)
 
 def_fn_writer(b,p...) = throw(InvalidStateException("IO configured only as", :reader))
-immutable FunctionBlobIO <: BlobIO
+immutable FunctionBlobIO{T} <: BlobIO{T}
     reader::Function
     writer::Function
-    FunctionBlobIO(reader::Function, writer::Function=def_fn_writer) = new(reader, writer)
 end
+FunctionBlobIO{T}(::Type{T}, reader::Function, writer::Function=def_fn_writer) = FunctionBlobIO{T}(reader, writer)
 
-locality{T<:BlobIO}(io::T, nodemap=DEF_NODE_MAP) = locality(T, nodemap)
+locality(io, nodemap=DEF_NODE_MAP) = locality(typeof(io), nodemap)
 
 ##
 # Mutability

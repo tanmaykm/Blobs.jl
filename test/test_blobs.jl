@@ -3,15 +3,17 @@
 @everywhere import Blobs: @logmsg
 
 function create_rand_file_backed_blob{T,L}(::Type{T}, ::Type{L}, sz::Int, nodeid::Int)
-    meta = TypedMeta(FileBlobIO => FileMeta(tempname(), 0, sizeof(T)*sz), FunctionBlobIO => FunctionMeta((sizeof(T)*sz,)))
-    Blob(T, L, meta, nodeid)
+    VT = Vector{T}
+    meta = TypedMeta(FileBlobIO{VT} => FileMeta(tempname(), 0, sizeof(T)*sz), FunctionBlobIO{VT} => FunctionMeta((sizeof(T)*sz,)))
+    Blob(VT, L, meta, nodeid)
 end
 
 function create_blob_collection{T,L}(::Type{T}, ::Type{L}, sz::Int)
+    VT = Vector{T}
     # have a random number generator as reader and save to file
-    mut = Mutable(sz*sizeof(T), FileBlobIO())
-    reader = FunctionBlobIO((p)->rand(T, p))
-    coll = BlobCollection(T, mut, reader)
+    mut = Mutable(sz*sizeof(T), FileBlobIO(VT))
+    reader = FunctionBlobIO(VT, (p)->rand(T, floor(Int,p/sizeof(T))))
+    coll = BlobCollection(VT, mut, reader)
 
     # create a blob for each worker
     for nodeid in workers()
@@ -21,7 +23,7 @@ function create_blob_collection{T,L}(::Type{T}, ::Type{L}, sz::Int)
     bids = collect(blobids(coll))
     register(coll, workers())
     collid = coll.id
-    @logmsg("created blob collection: $collid")
+    @logmsg("created blob collection: $collid, blob ids: $bids")
 
     # load all blobs
     @parallel for blobid in bids
@@ -38,7 +40,8 @@ function create_blob_collection{T,L}(::Type{T}, ::Type{L}, sz::Int)
 end
 
 function read_blob_collection{T,L}(::Type{T}, ::Type{L}, sz::Int, bcfile)
-    coll = load(BlobCollection(T, Immutable(sz*sizeof(T)), FileBlobIO()), bcfile)
+    VT = Vector{T}
+    coll = load(BlobCollection(VT, Immutable(sz*sizeof(T)), FileBlobIO(VT)), bcfile)
     register(coll, workers())
 
     collid = coll.id
@@ -55,11 +58,12 @@ function read_blob_collection{T,L}(::Type{T}, ::Type{L}, sz::Int, bcfile)
     coll
 end
 
-function cleanup_blob_collection(bcfile::AbstractString, coll::BlobCollection)
+function cleanup_blob_collection{T}(::Type{T}, bcfile::AbstractString, coll::BlobCollection)
+    VT = Vector{T}
     @logmsg("cleaning up...")
     for blobid in blobids(coll)
         blob = coll.blobs[blobid]
-        meta = blob.metadata.metadict[FileBlobIO]
+        meta = blob.metadata.metadict[FileBlobIO{VT}]
         rm(meta.filename)
         @logmsg("cleaned up blob $(meta.filename)")
     end
@@ -71,7 +75,7 @@ function test_blob{T,L}(::Type{T}, ::Type{L}, sz::Int)
     bcfile, coll = create_blob_collection(T, L, sz)         # create blob collection
     deregister(coll, procs())                               # deregister blob collection
     coll = read_blob_collection(T, L, sz, bcfile)           # restore the saved blob collection
-    cleanup_blob_collection(bcfile, coll)                   # clean up
+    cleanup_blob_collection(T, bcfile, coll)                # clean up
 end
 
 test_blob(Int64, StrongLocality, 10240)
