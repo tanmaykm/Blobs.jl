@@ -1,12 +1,42 @@
 @everywhere using Blobs
 @everywhere using Base.Test
 @everywhere import Blobs: @logmsg, load
-include(joinpath(dirname(@__FILE__), "../examples/densearray.jl"))
-using DenseArrayBlobs
-using DenseArrayBlobs: load, splitidx
+include(joinpath(dirname(@__FILE__), "../examples/matrix.jl"))
+using MatrixBlobs
+using MatrixBlobs: load, splitidx
 
 const FULLM = 10000
 const FULLN = 2000
+const DELTAM = 4000
+
+function test_sparse_mat_blobs()
+    metadir = tempdir()
+    sz = (FULLN, FULLM)
+    dmatblobs = SparseMatBlobs(SparseMatrixCSC{Float64,Int64}, sz,  0.01, DELTAM, metadir)
+    @test isfile(joinpath(metadir, "meta"))
+    @test isfile(joinpath(metadir, "1"))
+
+    println("loading sparse mat blobs from $metadir")
+    smatblobs = SparseMatBlobs(metadir)
+    for idx in 1:length(smatblobs.splits)
+        p = smatblobs.splits[idx]
+        r = p.first
+        part, _r = load(smatblobs, first(r))
+        @test r == _r
+        @test size(part) == (FULLN, length(r))
+        println("verified part $idx")
+    end
+
+    @test size(smatblobs) == sz
+
+    t1 = time()
+    for idx in 1:FULLM
+        @test isa(smatblobs[:,idx], SparseVector)
+    end
+    t2 = time()
+    td = t2 - t1
+    println("time for $FULLM column getindex: $td")
+end
 
 function test_dense_mat_blobs()
     metadir = tempdir()
@@ -74,3 +104,4 @@ function test_dense_mat_blobs()
 end
 
 test_dense_mat_blobs()
+test_sparse_mat_blobs()

@@ -7,5 +7,7 @@ include("test_attributes.jl")
 println("testing blobs...")
 include("test_blobs.jl")
 
-println("testing densearray blobs...")
-include("test_densearray_blobs.jl")
+#if !isless(Base.VERSION, v"0.5.0-")
+#println("testing matrix blobs...")
+#include("test_matrix_blobs.jl")
+#end
