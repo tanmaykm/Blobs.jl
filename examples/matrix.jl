@@ -3,7 +3,7 @@ module MatrixBlobs
 using Blobs
 import Blobs: @logmsg, load, save
 using Base.Random: UUID
-import Base: serialize, deserialize, getindex, setindex!, size
+import Base: serialize, deserialize, getindex, setindex!, size, append!
 
 export DenseMatBlobs, SparseMatBlobs, size, getindex, setindex!, serialize, deserialize
 
@@ -19,11 +19,11 @@ function relidx(range::Range, D::Int, i1::Int, i2::Int)
     end
 end
 
-type SparseMatBlobs{T} <: AbstractMatrix{T}
+type SparseMatBlobs{Tv,Ti} <: AbstractMatrix{Tv}
     metadir::AbstractString
     sz::Tuple
     splits::Vector{Pair}
-    coll::BlobCollection{T}
+    coll::BlobCollection{SparseMatrixCSC{Tv,Ti}}
 end
 
 # D = dimension that is split
@@ -32,7 +32,7 @@ type DenseMatBlobs{T,D,N} <: AbstractMatrix{T}
     metadir::AbstractString
     sz::Tuple
     splits::Vector{Pair}        # keep a mapping of index ranges to blobs
-    coll::BlobCollection{Vector{T}}
+    coll::BlobCollection{Matrix{T}}
 end
 
 typealias MatBlobs Union{SparseMatBlobs,DenseMatBlobs}
@@ -75,17 +75,17 @@ end
 
 ##
 # SparseMatBlobs specific functions
-function load{T<:Real,I<:Integer}(meta::FileMeta, reader::FileBlobIO{SparseMatrixCSC{T,I}})
+sersz{Tv,Ti}(sp::SparseMatrixCSC{Tv,Ti}) = (sizeof(Int64)*3 + sizeof(sp.colptr) + sizeof(sp.rowval) + sizeof(sp.nzval))
+
+function load{Tv<:Real,Ti<:Integer}(meta::FileMeta, reader::FileBlobIO{SparseMatrixCSC{Tv,Ti}})
     open(meta.filename, "r+") do fhandle
         seek(fhandle, meta.offset)
-        header = Array(Int64, 5)
+        header = Array(Int64, 3)
         pos1 = position(fhandle)
         header = read!(fhandle, header)
         m = header[1]
         n = header[2]
         nz = header[3] 
-        Tv = Base.Serializer.desertag(Int32(header[4]))
-        Ti = Base.Serializer.desertag(Int32(header[5]))
 
         pos1 += sizeof(header)
         colptr = reader.use_mmap ? Mmap.mmap(fhandle, Vector{Ti}, (n+1,), pos1) : read!(fhandle, Array(Ti, n+1))
@@ -100,7 +100,7 @@ function load{T<:Real,I<:Integer}(meta::FileMeta, reader::FileBlobIO{SparseMatri
 end
 
 function save{Tv<:Real,Ti<:Integer}(spm::SparseMatrixCSC{Tv,Ti}, meta::FileMeta, writer::FileBlobIO{SparseMatrixCSC{Tv,Ti}})
-    header = Int64[spm.m, spm.n, length(spm.nzval), Base.Serializer.sertag(Tv), Base.Serializer.sertag(Ti)]
+    header = Int64[spm.m, spm.n, length(spm.nzval)]
 
     touch(meta.filename)
     open(meta.filename, "r+") do fhandle
@@ -113,29 +113,29 @@ function save{Tv<:Real,Ti<:Integer}(spm::SparseMatrixCSC{Tv,Ti}, meta::FileMeta,
     nothing
 end
 
-function load{T}(sm::SparseMatBlobs{T}, col::Int)
+function load(sm::SparseMatBlobs, col::Int)
     splitnum = splitidx(sm, col)
     p = sm.splits[splitnum]
     range = p.first
     bid = p.second
     data = load(sm.coll, bid)
-    #@logmsg("loaded split idx:$(col) from splitnum $splitnum with range: $range")
+    #@logmsg("loaded split idx:$(col) from splitnum $splitnum ($bid) with range: $range, sz: $(size(data))")
     data, range
 end
 
-getindex{T}(sm::SparseMatBlobs{T}, i::Int) = getindex(sm, ind2sub(size(sm), i)...)
-function getindex{T}(sm::SparseMatBlobs{T}, i1::Int, i2::Int)
+getindex{Tv}(sm::SparseMatBlobs{Tv}, i::Int) = getindex(sm, ind2sub(size(sm), i)...)
+function getindex{Tv}(sm::SparseMatBlobs{Tv}, i1::Int, i2::Int)
     part, range = load(sm, i2)
     part[relidx(range, 2, i1, i2)...]
 end
 
-function getindex{T}(sm::SparseMatBlobs{T}, ::Colon, i2::Int)
+function getindex{Tv}(sm::SparseMatBlobs{Tv}, ::Colon, i2::Int)
     part, range = load(sm, i2)
     reli1, reli2 = relidx(range, 2, 1, i2)
     part[:,reli2]
 end
 
-function deserialize{T}(s::SerializationState, ::Type{SparseMatBlobs{T}})
+function deserialize{Tv,Ti}(s::SerializationState, ::Type{SparseMatBlobs{Tv,Ti}})
     sz = deserialize(s)
     splits = deserialize(s)
 
@@ -145,72 +145,86 @@ function deserialize{T}(s::SerializationState, ::Type{SparseMatBlobs{T}})
     coll_blobs = deserialize(s)
     coll_maxcache = deserialize(s)
 
-    coll = BlobCollection(T, coll_mut, coll_reader; maxcache=coll_maxcache, id=coll_id)
+    coll = BlobCollection(SparseMatrixCSC{Tv,Ti}, coll_mut, coll_reader; maxcache=coll_maxcache, id=coll_id)
     coll.blobs = coll_blobs
-    SparseMatBlobs{T}("", sz, splits, coll)
+    SparseMatBlobs{Tv,Ti}("", sz, splits, coll)
 end
 
-function SparseMatBlobs{T}(::Type{T}, sz::Tuple, sparsity::Float64, deltaN::Int, metadir::AbstractString)
+function SparseMatBlobs{Tv,Ti}(::Type{Tv}, ::Type{Ti}, metadir::AbstractString)
+    T = SparseMatrixCSC{Tv,Ti}
     mut = Mutable(BYTES_128MB, FileBlobIO(T, true))
     coll = BlobCollection(T, mut, FileBlobIO(T, true))
+    SparseMatBlobs{Tv,Ti}(metadir, (0,0), Pair[], coll)
+end
 
-    @logmsg("creating new sparse mat blobs...")
-    # create new
-    splits = Pair[]
-    M, N = sz
-    startidx = 1
-    @logmsg("startidx:$startidx, M:$M, N:$N")
-    while startidx <= N
-        idxrange = startidx:min(N, startidx + deltaN)
-        @logmsg("idxrange: $idxrange")
-
-        fname = joinpath(metadir, string(length(splits)+1))
-        @logmsg("fname $fname")
-        sp = sprand(M, length(idxrange), 0.01)
-        meta = FileMeta(fname, 0, BYTES_128MB)
-        @logmsg("saving to $fname")
-        save(sp, meta, mut.writer)
-        meta.size = filesize(fname)
-
-        blob = append!(coll, T, meta, StrongLocality(myid()))
-        push!(splits, idxrange => blob.id)
-        startidx = last(idxrange) + 1
-        @logmsg("created blob for range $idxrange, startidx now: $startidx")
+function append!{Tv,Ti}(sp::SparseMatBlobs{Tv,Ti}, S::SparseMatrixCSC{Tv,Ti})
+    m,n = size(S)
+    if isempty(sp.splits)
+        sp.sz = (m, n)
+        idxrange = 1:n
+    else
+        (sp.sz[1] == m) || throw(BoundsError("SparseMatBlobs $(sp.sz)", (m,n)))
+        old_n = sp.sz[2]
+        idxrange = (old_n+1):(old_n+n)
+        sp.sz = (m, old_n+n)
     end
 
-    # load all blobs
-    idx = 1
-    for idx in 1:length(splits)
-        p = splits[idx]
-        blobid = p.second
-        part = load(coll, blobid)
-        @logmsg("loaded $blobid with $idx")
-    end
-    @logmsg("saving all blobs")
-    save(coll)
+    fname = joinpath(sp.metadir, string(length(sp.splits)+1))
+    meta = FileMeta(fname, 0, sersz(S))
 
-    @logmsg("saving sparsematarray")
-    mat = SparseMatBlobs{T}(metadir, sz, splits, coll)
-    open(joinpath(metadir, "meta"), "w") do io
-        serialize(SerializationState(io), mat)
+    blob = append!(sp.coll, SparseMatrixCSC{Tv,Ti}, meta, StrongLocality(myid()), Nullable(S))
+    push!(sp.splits, idxrange => blob.id)
+    @logmsg("appending blob $(blob.id) of size: $(size(S)) for idxrange: $idxrange, sersz: $(meta.size)")
+    nothing
+end
+
+function save(sp::SparseMatBlobs)
+    save(sp.coll)
+    open(joinpath(sp.metadir, "meta"), "w") do io
+        serialize(SerializationState(io), sp)
     end
-    mat
+    nothing
 end
 
 SparseMatBlobs(metadir::AbstractString) = matblob(metadir)
 
 ##
 # DenseMatBlobs specific functions
+sersz{T}(d::Matrix{T}) = (sizeof(Int64)*2 + sizeof(d))
+
+function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Matrix{T}})
+    open(meta.filename, "r+") do fhandle
+        seek(fhandle, meta.offset)
+        header = Array(Int64, 2)
+        pos1 = position(fhandle)
+        header = read!(fhandle, header)
+        m = header[1]
+        n = header[2]
+
+        pos1 += sizeof(header)
+        data = reader.use_mmap ? Mmap.mmap(fhandle, Matrix{T}, (m,n), pos1) : read!(fhandle, Array(T, m, n))
+        return data
+    end
+end
+
+function save{T<:Real}(M::Matrix{T}, meta::FileMeta, writer::FileBlobIO{Matrix{T}})
+    header = Int64[size(M)...]
+
+    touch(meta.filename)
+    open(meta.filename, "r+") do fhandle
+        seek(fhandle, meta.offset)
+        write(fhandle, header)
+        write(fhandle, M)
+    end
+    nothing
+end
+
 function load{T,D,N}(dm::DenseMatBlobs{T,D,N}, splitdim_idx::Int)
     splitnum = splitidx(dm, splitdim_idx)
     p = dm.splits[splitnum]
     range = p.first
     bid = p.second
-    bytes = load(dm.coll, bid)
-    M = length(range)
-    split_dim = (D == 1) ? (M,N) : (N,M)
-    #@logmsg("loaded split idx:$(splitdim_idx) from splitnum $splitnum with range: $range")
-    reshape(bytes, split_dim), range
+    load(dm.coll, bid), range
 end
 
 getindex{T,D,N}(dm::DenseMatBlobs{T,D,N}, i::Int) = getindex(dm, ind2sub(size(dm), i)...)
@@ -254,7 +268,6 @@ function setindex!{T,N}(dm::DenseMatBlobs{T,2,N}, v, ::Colon, i2::Int)
 end
 
 function deserialize{T,D,N}(s::SerializationState, ::Type{DenseMatBlobs{T,D,N}})
-    VT = Vector{T}
     sz = deserialize(s)
     splits = deserialize(s)
 
@@ -264,52 +277,50 @@ function deserialize{T,D,N}(s::SerializationState, ::Type{DenseMatBlobs{T,D,N}})
     coll_blobs = deserialize(s)
     coll_maxcache = deserialize(s)
 
-    coll = BlobCollection(VT, coll_mut, coll_reader; maxcache=coll_maxcache, id=coll_id)
+    coll = BlobCollection(Matrix{T}, coll_mut, coll_reader; maxcache=coll_maxcache, id=coll_id)
     coll.blobs = coll_blobs
     DenseMatBlobs{T,D,N}("", sz, splits, coll)
 end
 
-function DenseMatBlobs{T}(::Type{T}, splitdim::Int, sz::Tuple, metadir::AbstractString, max_size::Int=def_sz(T))
-    VT = Vector{T}
-    mut = Mutable(max_size, FileBlobIO(VT, true))
-    coll = BlobCollection(VT, mut, FileBlobIO(VT, true))
+function DenseMatBlobs{Tv}(::Type{Tv}, D::Int, N::Int, metadir::AbstractString)
+    T = Matrix{Tv}
+    mut = Mutable(BYTES_128MB, FileBlobIO(T, true))
+    coll = BlobCollection(T, mut, FileBlobIO(T, true))
+    DenseMatBlobs{Tv,D,N}(metadir, (0,0), Pair[], coll)
+end
 
-    @logmsg("creating new dense mat blobs...")
-    # create new
-    splits = Pair[]
-    N = sz[(splitdim == 1) ? 2 : 1]
-    M = sz[splitdim]
-    deltaM = max(1, floor(Int, max_size/N))
-    startidx = 1
-    while startidx <= sz[splitdim]
-        idxrange = startidx:min(M, startidx + deltaM)
-        meta = FileMeta(joinpath(metadir, string(length(splits)+1)), 0, length(idxrange)*N*sizeof(T))
-        blob = append!(coll, VT, meta, StrongLocality(myid()))
-        push!(splits, idxrange => blob.id)
-        startidx = last(idxrange) + 1
-        @logmsg("created blob for range $idxrange")
+function append!{Tv,D,N}(dm::DenseMatBlobs{Tv,D,N}, M::Matrix{Tv})
+    m,n = size(M)
+    unsplit_dim = (D == 1) ? n : m
+    split_dim = (D == 1) ? m : n
+    (N == unsplit_dim) || throw(BoundsError("DenseMatBlobs with unsplit dimension $D fixed at $N", (m,n)))
+    if isempty(dm.splits)
+        dm.sz = (m, n)
+        idxrange = 1:split_dim
+    else
+        old_split_dim = dm.sz[D]
+        new_split_dim = old_split_dim + split_dim
+        idxrange = (old_split_dim+1):new_split_dim
+        dm.sz = (D == 1) ? (new_split_dim, unsplit_dim) : (unsplit_dim, new_split_dim)
     end
 
-    # load all blobs to initialize
-    idx = 1
-    for idx in 1:length(splits)
-        p = splits[idx]
-        blobid = p.second
-        part = load(coll, blobid)
-        fill!(part, idx)
-        @logmsg("initialized $blobid with $idx")
-    end
-    @logmsg("saving all blobs")
-    save(coll)
+    fname = joinpath(dm.metadir, string(length(dm.splits)+1))
+    meta = FileMeta(fname, 0, sersz(M))
 
-    @logmsg("saving densematarray")
-    mat = DenseMatBlobs{T,splitdim,N}(metadir, sz, splits, coll)
-    open(joinpath(metadir, "meta"), "w") do io
-        serialize(SerializationState(io), mat)
-    end
-    mat
+    blob = append!(dm.coll, Matrix{Tv}, meta, StrongLocality(myid()), Nullable(M))
+    push!(dm.splits, idxrange => blob.id)
+    @logmsg("appending blob $(blob.id) of size: $(size(M)) for idxrange: $idxrange, sersz: $(meta.size)")
+    nothing
 end
 
 DenseMatBlobs(metadir::AbstractString) = matblob(metadir)
+
+function save(dm::DenseMatBlobs)
+    save(dm.coll)
+    open(joinpath(dm.metadir, "meta"), "w") do io
+        serialize(SerializationState(io), dm)
+    end
+    nothing
+end
 
 end # module
