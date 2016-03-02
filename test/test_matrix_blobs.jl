@@ -9,10 +9,28 @@ const FULLM = 10000
 const FULLN = 2000
 const DELTAM = 4000
 
+function make_sparse_blobs(sz::Tuple, sparsity::Float64, deltaN::Int, metadir::AbstractString)
+    spblobs = SparseMatBlobs(Float64, Int64, metadir)
+    startidx = 1
+    @logmsg("startidx:$startidx, sz:$sz")
+    M,N = sz
+    while startidx <= N
+        idxrange = startidx:min(N, startidx + deltaN)
+        sp = sprand(M, length(idxrange), 0.01)
+        @logmsg("idxrange: $idxrange, sz: $(size(sp))")
+        append!(spblobs, sp)
+        startidx = last(idxrange) + 1
+    end
+
+    @logmsg("saving sparsematarray")
+    save(spblobs)
+    spblobs
+end
+
 function test_sparse_mat_blobs()
     metadir = tempdir()
     sz = (FULLN, FULLM)
-    dmatblobs = SparseMatBlobs(SparseMatrixCSC{Float64,Int64}, sz,  0.01, DELTAM, metadir)
+    spblobs = make_sparse_blobs(sz,  0.01, DELTAM, metadir)
     @test isfile(joinpath(metadir, "meta"))
     @test isfile(joinpath(metadir, "1"))
 
@@ -22,6 +40,7 @@ function test_sparse_mat_blobs()
         p = smatblobs.splits[idx]
         r = p.first
         part, _r = load(smatblobs, first(r))
+        @logmsg("got part of size: $(size(part)), with r: $r, _r:$_r")
         @test r == _r
         @test size(part) == (FULLN, length(r))
         println("verified part $idx")
@@ -38,10 +57,33 @@ function test_sparse_mat_blobs()
     println("time for $FULLM column getindex: $td")
 end
 
+function make_dense_mat_blobs(sz::Tuple, splitdim::Int, delta::Int, metadir::AbstractString)
+    UD = (splitdim == 1) ? sz[2] : sz[1]
+    SD = sz[splitdim]
+    dmblobs = DenseMatBlobs(Int64, splitdim, UD, metadir)
+
+    startidx = 1
+    @logmsg("startidx:$startidx, sz:$sz")
+    idx = 1
+    while startidx <= SD
+        idxrange = startidx:min(SD, startidx + delta)
+        D = (splitdim == 1) ? (length(idxrange),UD) : (UD,length(idxrange))
+        M = ones(Int64, D...) * idx
+        @logmsg("idxrange: $idxrange, sz: $(size(M))")
+        append!(dmblobs, M)
+        startidx = last(idxrange) + 1
+        idx += 1
+    end
+
+    @logmsg("saving densematarray")
+    save(dmblobs)
+    dmblobs
+end
+
 function test_dense_mat_blobs()
     metadir = tempdir()
     sz = (FULLM, FULLN)
-    dmatblobs = DenseMatBlobs(Int64, 1, sz, metadir)
+    dmatblobs = make_dense_mat_blobs(sz, 1, DELTAM, metadir)
     @test isfile(joinpath(metadir, "meta"))
     @test isfile(joinpath(metadir, "1"))
 
@@ -103,5 +145,5 @@ function test_dense_mat_blobs()
     println("time for non optimal setindex: $td")
 end
 
-test_dense_mat_blobs()
 test_sparse_mat_blobs()
+test_dense_mat_blobs()

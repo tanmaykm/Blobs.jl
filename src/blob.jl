@@ -139,11 +139,21 @@ function deregister(coll::BlobCollection, wrkrs::Vector{Int})
     end
 end
 
-append!{T,L}(coll::Union{UUID,BlobCollection}, ::Type{T}, blobmeta::BlobMeta, ::Type{L}) = append!(coll, Blob(T, L, blobmeta))
-append!{T}(coll::Union{UUID,BlobCollection}, ::Type{T}, blobmeta::BlobMeta, loc::Locality) = append!(coll, Blob(T, blobmeta, loc))
+function append!{T,L}(coll::Union{UUID,BlobCollection}, ::Type{T}, blobmeta::BlobMeta, ::Type{L}, v::Nullable{T}=Nullable{T}())
+    blob = Blob(T, L, blobmeta)
+    isnull(v) || (blob.data.value = get(v))
+    append!(coll, blob)
+end
+function append!{T}(coll::Union{UUID,BlobCollection}, ::Type{T}, blobmeta::BlobMeta, loc::Locality, v::Nullable{T}=Nullable{T}())
+    blob = Blob(T, blobmeta, loc)
+    isnull(v) || (blob.data.value = get(v))
+    append!(coll, blob)
+end
 append!(coll::UUID, blob::Blob) = append!(BlobCollection(id::UUID), blob)
 function append!(coll::BlobCollection, blob::Blob)
+    (blob.data.value == nothing) || (coll.cache[blob.id] = blob.data.value)
     coll.blobs[blob.id] = blob
+    
 end
 blobids(coll::BlobCollection) = keys(coll.blobs)
 
