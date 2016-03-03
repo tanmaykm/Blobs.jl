@@ -153,7 +153,6 @@ append!(coll::UUID, blob::Blob) = append!(BlobCollection(id::UUID), blob)
 function append!(coll::BlobCollection, blob::Blob)
     (blob.data.value == nothing) || (coll.cache[blob.id] = blob.data.value)
     coll.blobs[blob.id] = blob
-    
 end
 blobids(coll::BlobCollection) = keys(coll.blobs)
 

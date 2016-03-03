@@ -5,7 +5,7 @@ import Blobs: @logmsg, load, save
 using Base.Random: UUID
 import Base: serialize, deserialize, getindex, setindex!, size, append!
 
-export DenseMatBlobs, SparseMatBlobs, size, getindex, setindex!, serialize, deserialize
+export DenseMatBlobs, SparseMatBlobs, size, getindex, setindex!, serialize, deserialize, save, load
 
 const BYTES_128MB = 128 * 1024 * 1024
 
@@ -175,7 +175,7 @@ function append!{Tv,Ti}(sp::SparseMatBlobs{Tv,Ti}, S::SparseMatrixCSC{Tv,Ti})
     blob = append!(sp.coll, SparseMatrixCSC{Tv,Ti}, meta, StrongLocality(myid()), Nullable(S))
     push!(sp.splits, idxrange => blob.id)
     @logmsg("appending blob $(blob.id) of size: $(size(S)) for idxrange: $idxrange, sersz: $(meta.size)")
-    nothing
+    blob
 end
 
 function save(sp::SparseMatBlobs)
@@ -310,7 +310,7 @@ function append!{Tv,D,N}(dm::DenseMatBlobs{Tv,D,N}, M::Matrix{Tv})
     blob = append!(dm.coll, Matrix{Tv}, meta, StrongLocality(myid()), Nullable(M))
     push!(dm.splits, idxrange => blob.id)
     @logmsg("appending blob $(blob.id) of size: $(size(M)) for idxrange: $idxrange, sersz: $(meta.size)")
-    nothing
+    blob
 end
 
 DenseMatBlobs(metadir::AbstractString) = matblob(metadir)
