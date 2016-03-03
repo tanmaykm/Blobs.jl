@@ -196,6 +196,19 @@ function save(coll::BlobCollection)
     end
 end
 
+flush(coll::BlobCollection, wrkrs::Vector{Int}; callback::Bool=true) = flush(coll.id, wrkrs; callback=callback)
+function flush(collid::UUID, wrkrs::Vector{Int}; callback::Bool=true)
+    @sync for w in wrkrs
+        @async remotecall_wait((collid)->flush(collid; callback=callback), w, collid)
+    end
+end
+flush(collid::UUID; callback::Bool=true) = flush(BlobCollection(collid); callback=callback)
+function flush(coll::BlobCollection; callback::Bool=true)
+    for blob in values(coll.blobs)
+        flush(coll, blob; callback=callback)
+    end
+end
+
 
 # mutability of a blob collection may be switched at run time, whithout affecting anything else.
 as_mutable{T,M<:Mutable}(coll::BlobCollection{T,M}, mutability::Mutable) = coll
@@ -247,6 +260,14 @@ save{T,M<:Mutable}(coll::BlobCollection{T,M}, blobid::UUID) = save(coll, coll.bl
 function save{T,M<:Mutable}(coll::BlobCollection{T,M}, blob::Blob)
     if haskey(coll.cache, blob.id)
         save(blob.data.value, blob.metadata, coll.mutability.writer)
+    end
+end
+
+flush(collid::UUID, blobid::UUID; callback::Bool=true) = flush(BlobCollection(collid), blobid; callback=callback)
+flush{T,M<:Mutable}(coll::BlobCollection{T,M}, blobid::UUID; callback::Bool=true) = flush(coll, coll.blobs[blobid]; callback=callback)
+function flush{T,M<:Mutable}(coll::BlobCollection{T,M}, blob::Blob; callback::Bool=true)
+    if haskey(coll.cache, blob.id)
+        delete!(coll.cache, blob.id; callback=callback)
     end
 end
 

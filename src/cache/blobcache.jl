@@ -101,17 +101,19 @@ function Base.resize!(lru::LRU, n::Int)
     return lru
 end
 
-function Base.delete!(lru::LRU, key)
+function Base.delete!(lru::LRU, key; callback::Bool=true)
     item = lru.ht[key]
-    lru.cb(item.k, item.v)
+    callback && lru.cb(item.k, item.v)
     delete!(lru.q, item)
     delete!(lru.ht, key)
     return lru
 end
 
-function Base.empty!(lru::LRU)
-    for item in values(lru.ht)
-        lru.cb(item.k, item.v)
+function Base.empty!(lru::LRU; callback::Bool=true)
+    if callback
+        for item in values(lru.ht)
+            lru.cb(item.k, item.v)
+        end
     end
     empty!(lru.ht)
     empty!(lru.q)

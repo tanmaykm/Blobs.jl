@@ -1,11 +1,11 @@
 module MatrixBlobs
 
 using Blobs
-import Blobs: @logmsg, load, save
+import Blobs: @logmsg, load, save, flush
 using Base.Random: UUID
-import Base: serialize, deserialize, getindex, setindex!, size, append!
+import Base: serialize, deserialize, getindex, setindex!, size, append!, flush
 
-export DenseMatBlobs, SparseMatBlobs, size, getindex, setindex!, serialize, deserialize, save, load
+export DenseMatBlobs, SparseMatBlobs, size, getindex, setindex!, serialize, deserialize, save, load, flush
 
 const BYTES_128MB = 128 * 1024 * 1024
 
@@ -55,6 +55,7 @@ end
 
 function serialize(s::SerializationState, sm::MatBlobs)
     Serializer.serialize_type(s, typeof(sm))
+    serialize(s, sm.metadir)
     serialize(s, sm.sz)
     serialize(s, sm.splits)
 
@@ -69,8 +70,15 @@ end
 function matblob(metadir::AbstractString)
     @logmsg("reading back matrix from $metadir")
     open(joinpath(metadir, "meta"), "r") do io
-        deserialize(SerializationState(io))
+        mat = deserialize(SerializationState(io))
+        mat.metadir = metadir
+        mat
     end
+end
+
+function flush(dm::MatBlobs, wrkrs::Vector{Int}=Int[]; callback::Bool=true)
+    isempty(wrkrs) ? flush(dm.coll; callback=callback) : flush(dm.coll, wrkrs; callback=callback)
+    nothing
 end
 
 ##
@@ -136,6 +144,7 @@ function getindex{Tv}(sm::SparseMatBlobs{Tv}, ::Colon, i2::Int)
 end
 
 function deserialize{Tv,Ti}(s::SerializationState, ::Type{SparseMatBlobs{Tv,Ti}})
+    metadir = deserialize(s)
     sz = deserialize(s)
     splits = deserialize(s)
 
@@ -147,7 +156,7 @@ function deserialize{Tv,Ti}(s::SerializationState, ::Type{SparseMatBlobs{Tv,Ti}}
 
     coll = BlobCollection(SparseMatrixCSC{Tv,Ti}, coll_mut, coll_reader; maxcache=coll_maxcache, id=coll_id)
     coll.blobs = coll_blobs
-    SparseMatBlobs{Tv,Ti}("", sz, splits, coll)
+    SparseMatBlobs{Tv,Ti}(metadir, sz, splits, coll)
 end
 
 function SparseMatBlobs{Tv,Ti}(::Type{Tv}, ::Type{Ti}, metadir::AbstractString)
@@ -178,7 +187,8 @@ function append!{Tv,Ti}(sp::SparseMatBlobs{Tv,Ti}, S::SparseMatrixCSC{Tv,Ti})
     blob
 end
 
-function save(sp::SparseMatBlobs)
+function save(sp::SparseMatBlobs, wrkrs::Vector{Int}=Int[])
+    isempty(wrkrs) ? save(sp.coll) : save(sp.coll, wrkrs)
     save(sp.coll)
     open(joinpath(sp.metadir, "meta"), "w") do io
         serialize(SerializationState(io), sp)
@@ -268,6 +278,7 @@ function setindex!{T,N}(dm::DenseMatBlobs{T,2,N}, v, ::Colon, i2::Int)
 end
 
 function deserialize{T,D,N}(s::SerializationState, ::Type{DenseMatBlobs{T,D,N}})
+    metadir = deserialize(s)
     sz = deserialize(s)
     splits = deserialize(s)
 
@@ -279,7 +290,7 @@ function deserialize{T,D,N}(s::SerializationState, ::Type{DenseMatBlobs{T,D,N}})
 
     coll = BlobCollection(Matrix{T}, coll_mut, coll_reader; maxcache=coll_maxcache, id=coll_id)
     coll.blobs = coll_blobs
-    DenseMatBlobs{T,D,N}("", sz, splits, coll)
+    DenseMatBlobs{T,D,N}(metadir, sz, splits, coll)
 end
 
 function DenseMatBlobs{Tv}(::Type{Tv}, D::Int, N::Int, metadir::AbstractString)
@@ -315,8 +326,8 @@ end
 
 DenseMatBlobs(metadir::AbstractString) = matblob(metadir)
 
-function save(dm::DenseMatBlobs)
-    save(dm.coll)
+function save(dm::DenseMatBlobs, wrkrs::Vector{Int}=Int[])
+    isempty(wrkrs) ? save(dm.coll) : save(dm.coll, wrkrs)
     open(joinpath(dm.metadir, "meta"), "w") do io
         serialize(SerializationState(io), dm)
     end

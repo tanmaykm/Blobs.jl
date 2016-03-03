@@ -5,14 +5,14 @@ using Compat
 using Base.Random: UUID, uuid4
 using Base.Mmap: sync!
 using Base: IPAddr
-import Base: serialize, deserialize, append!
+import Base: serialize, deserialize, append!, flush
 
 export Locality, StrongLocality, WeakLocality
 export Mutability, Mutable, Immutable
 export Node, NodeMap, nodeids, addnode, localto, islocal
 export BlobMeta, TypedMeta, FileMeta, FunctionMeta
 export BlobIO, NoopBlobIO, FileBlobIO, FunctionBlobIO
-export Blob, BlobCollection, blobids, load, save, serialize, deserialize, register, deregister, append!
+export Blob, BlobCollection, blobids, load, save, serialize, deserialize, register, deregister, append!, flush
 
 # enable logging only during debugging
 #using Logging
