@@ -7,6 +7,7 @@ using Base.Mmap: sync!
 using Base: IPAddr
 import Base: serialize, deserialize, append!, flush
 
+export ismmapped, delmmapped, syncmmapped, blobmmap
 export Locality, StrongLocality, WeakLocality
 export Mutability, Mutable, Immutable
 export Node, NodeMap, nodeids, addnode, localto, islocal

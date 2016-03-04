@@ -97,27 +97,33 @@ function load{Tv<:Real,Ti<:Integer}(meta::FileMeta, reader::FileBlobIO{SparseMat
         nz = header[3] 
 
         pos1 += sizeof(header)
-        colptr = reader.use_mmap ? Mmap.mmap(fhandle, Vector{Ti}, (n+1,), pos1) : read!(fhandle, Array(Ti, n+1))
+        colptr = reader.use_mmap ? blobmmap(fhandle, Vector{Ti}, (n+1,), pos1) : read!(fhandle, Array(Ti, n+1))
 
         pos1 += sizeof(colptr)
-        rowval = reader.use_mmap ? Mmap.mmap(fhandle, Vector{Ti}, (nz,), pos1) : read!(fhandle, Array(Ti, nz))
+        rowval = reader.use_mmap ? blobmmap(fhandle, Vector{Ti}, (nz,), pos1) : read!(fhandle, Array(Ti, nz))
 
         pos1 += sizeof(rowval)
-        nzval = reader.use_mmap ? Mmap.mmap(fhandle, Vector{Tv}, (nz,), pos1) : read!(fhandle, Array(Tv, nz))
+        nzval = reader.use_mmap ? blobmmap(fhandle, Vector{Tv}, (nz,), pos1) : read!(fhandle, Array(Tv, nz))
         return SparseMatrixCSC{Tv,Ti}(m, n, colptr, rowval, nzval)
     end
 end
 
 function save{Tv<:Real,Ti<:Integer}(spm::SparseMatrixCSC{Tv,Ti}, meta::FileMeta, writer::FileBlobIO{SparseMatrixCSC{Tv,Ti}})
-    header = Int64[spm.m, spm.n, length(spm.nzval)]
+    if writer.use_mmap && ismmapped(spm.colptr) && ismmapped(spm.rowval) && ismmapped(spm.nzval)
+        syncmmapped(spm.colptr)
+        syncmmapped(spm.rowval)
+        syncmmapped(spm.nzval)
+    else
+        header = Int64[spm.m, spm.n, length(spm.nzval)]
 
-    touch(meta.filename)
-    open(meta.filename, "r+") do fhandle
-        seek(fhandle, meta.offset)
-        write(fhandle, header)
-        write(fhandle, spm.colptr)
-        write(fhandle, spm.rowval)
-        write(fhandle, spm.nzval)
+        touch(meta.filename)
+        open(meta.filename, "r+") do fhandle
+            seek(fhandle, meta.offset)
+            write(fhandle, header)
+            write(fhandle, spm.colptr)
+            write(fhandle, spm.rowval)
+            write(fhandle, spm.nzval)
+        end
     end
     nothing
 end
@@ -213,19 +219,23 @@ function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Matrix{T}})
         n = header[2]
 
         pos1 += sizeof(header)
-        data = reader.use_mmap ? Mmap.mmap(fhandle, Matrix{T}, (m,n), pos1) : read!(fhandle, Array(T, m, n))
+        data = reader.use_mmap ? blobmmap(fhandle, Matrix{T}, (m,n), pos1) : read!(fhandle, Array(T, m, n))
         return data
     end
 end
 
 function save{T<:Real}(M::Matrix{T}, meta::FileMeta, writer::FileBlobIO{Matrix{T}})
-    header = Int64[size(M)...]
+    if writer.use_mmap && ismmapped(M)
+        syncmmapped(M)
+    else
+        header = Int64[size(M)...]
 
-    touch(meta.filename)
-    open(meta.filename, "r+") do fhandle
-        seek(fhandle, meta.offset)
-        write(fhandle, header)
-        write(fhandle, M)
+        touch(meta.filename)
+        open(meta.filename, "r+") do fhandle
+            seek(fhandle, meta.offset)
+            write(fhandle, header)
+            write(fhandle, M)
+        end
     end
     nothing
 end
