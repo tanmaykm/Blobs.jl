@@ -139,6 +139,13 @@ function deregister(coll::BlobCollection, wrkrs::Vector{Int})
     end
 end
 
+max_cached(coll::BlobCollection) = coll.maxcache
+function max_cached!(coll::BlobCollection, maxcache::Int)
+    coll.maxcache = maxcache
+    resize!(coll.cache, maxcache)
+    nothing
+end
+
 function append!{T,L}(coll::Union{UUID,BlobCollection}, ::Type{T}, blobmeta::BlobMeta, ::Type{L}, v::Nullable{T}=Nullable{T}())
     blob = Blob(T, L, blobmeta)
     isnull(v) || (blob.data.value = get(v))

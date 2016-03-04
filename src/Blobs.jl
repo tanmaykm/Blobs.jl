@@ -12,7 +12,7 @@ export Mutability, Mutable, Immutable
 export Node, NodeMap, nodeids, addnode, localto, islocal
 export BlobMeta, TypedMeta, FileMeta, FunctionMeta
 export BlobIO, NoopBlobIO, FileBlobIO, FunctionBlobIO
-export Blob, BlobCollection, blobids, load, save, serialize, deserialize, register, deregister, append!, flush
+export Blob, BlobCollection, blobids, load, save, serialize, deserialize, register, deregister, append!, flush, max_cached, max_cached!
 
 # enable logging only during debugging
 #using Logging
