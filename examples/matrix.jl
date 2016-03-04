@@ -209,37 +209,6 @@ SparseMatBlobs(metadir::AbstractString; maxcache::Int=10) = matblob(metadir; max
 # DenseMatBlobs specific functions
 sersz{T}(d::Matrix{T}) = (sizeof(Int64)*2 + sizeof(d))
 
-function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Matrix{T}})
-    open(meta.filename, "r+") do fhandle
-        seek(fhandle, meta.offset)
-        header = Array(Int64, 2)
-        pos1 = position(fhandle)
-        header = read!(fhandle, header)
-        m = header[1]
-        n = header[2]
-
-        pos1 += sizeof(header)
-        data = reader.use_mmap ? blobmmap(fhandle, Matrix{T}, (m,n), pos1) : read!(fhandle, Array(T, m, n))
-        return data
-    end
-end
-
-function save{T<:Real}(M::Matrix{T}, meta::FileMeta, writer::FileBlobIO{Matrix{T}})
-    if writer.use_mmap && ismmapped(M)
-        syncmmapped(M)
-    else
-        header = Int64[size(M)...]
-
-        touch(meta.filename)
-        open(meta.filename, "r+") do fhandle
-            seek(fhandle, meta.offset)
-            write(fhandle, header)
-            write(fhandle, M)
-        end
-    end
-    nothing
-end
-
 function load{T,D,N}(dm::DenseMatBlobs{T,D,N}, splitdim_idx::Int)
     splitnum = splitidx(dm, splitdim_idx)
     p = dm.splits[splitnum]
@@ -306,8 +275,9 @@ end
 
 function DenseMatBlobs{Tv}(::Type{Tv}, D::Int, N::Int, metadir::AbstractString; maxcache::Int=10)
     T = Matrix{Tv}
-    mut = Mutable(BYTES_128MB, FileBlobIO(T, true))
-    coll = BlobCollection(T, mut, FileBlobIO(T, true); maxcache=maxcache)
+    io = FileBlobIO(Array{Tv}, true)
+    mut = Mutable(BYTES_128MB, io)
+    coll = BlobCollection(T, mut, io; maxcache=maxcache)
     DenseMatBlobs{Tv,D,N}(metadir, (0,0), Pair[], coll)
 end
 

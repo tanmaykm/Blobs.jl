@@ -74,6 +74,58 @@ function save{T<:Real}(databytes::Vector{T}, meta::FileMeta, writer::FileBlobIO{
     nothing
 end
 
+function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Array{T}})
+    open(meta.filename, "r+") do fhandle
+        seek(fhandle, meta.offset)
+        pos1 = position(fhandle)
+
+        hdrsz = read(fhandle, Int64)
+        pos1 += sizeof(hdrsz)
+
+        header = Array(Int64, hdrsz)
+        read!(fhandle, header)
+        pos1 += sizeof(header)
+
+        data = reader.use_mmap ? blobmmap(fhandle, Array{T,hdrsz}, tuple(header...), pos1) : read!(fhandle, Array(T, header...))
+        return data
+    end
+end
+
+function save{T<:Real}(M::Array{T}, meta::FileMeta, writer::FileBlobIO{Array{T}})
+    dn = dirname(meta.filename)
+    isdir(dn) || mkpath(dn)
+    if writer.use_mmap && ismmapped(M)
+        syncmmapped(M)
+    else
+        header = Int64[size(M)...]
+        hdrsz = Int64(length(header))
+
+        touch(meta.filename)
+        open(meta.filename, "r+") do fhandle
+            seek(fhandle, meta.offset)
+            write(fhandle, hdrsz)
+            write(fhandle, header)
+            write(fhandle, M)
+        end
+    end
+    nothing
+end
+
+function load(meta::FileMeta, reader::FileBlobIO{Any})
+    open(meta.filename, "r+") do fhandle
+        seek(fhandle, meta.offset)
+        return deserialize(SerializationState(fhandle))
+    end
+end
+
+function save(data, meta::FileMeta, writer::FileBlobIO{Any})
+    open(meta.filename, "r+") do fhandle
+        seek(fhandle, meta.offset)
+        serialize(SerializationState(fhandle), data)
+    end
+end
+
+
 # function blob io
 # function outputs have strong locality only to the pid
 locality{T}(::Type{FunctionBlobIO{T}}, nodemap::NodeMap=DEF_NODE_MAP) = StrongLocality(myid())
@@ -115,14 +167,14 @@ islocal(blob::Blob, nodeid::Int) = islocal(blob.locality, nodeid)
 type BlobCollection{T, M<:Mutability}
     id::UUID
     mutability::M
-    reader::BlobIO{T}
+    reader::BlobIO
     nodemap::NodeMap
     blobs::Dict{UUID,Blob}
     maxcache::Int
     cache::LRU{UUID,T}
 end
 
-function BlobCollection{T,M<:Mutability}(::Type{T}, mutability::M, reader::BlobIO{T}; maxcache::Int=10, nodemap::NodeMap=DEF_NODE_MAP, id::UUID=uuid4())
+function BlobCollection{T,M<:Mutability}(::Type{T}, mutability::M, reader::BlobIO; maxcache::Int=10, nodemap::NodeMap=DEF_NODE_MAP, id::UUID=uuid4())
     L = typeof(locality(reader))
     blobs = Dict{UUID,Blob{T,L}}()
     cache = LRU{UUID,T}(maxcache)
