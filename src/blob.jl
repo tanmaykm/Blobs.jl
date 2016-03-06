@@ -1,5 +1,4 @@
 # mmap helper
-const mmapped = Set{UInt}()
 
 ismmapped(a::Array) = (convert(UInt, pointer(a)) in mmapped)
 delmmapped(a::Array) = delete!(mmapped, convert(UInt, pointer(a)))
@@ -46,6 +45,7 @@ function locality{T}(::Type{FileBlobIO{T}}, nodemap::NodeMap=DEF_NODE_MAP)
 end
 
 function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Vector{T}})
+    @logmsg("load using FileBlobIO{Vector{$T}}")
     sz = floor(Int, meta.size / sizeof(T))
     if reader.use_mmap
         return blobmmap(meta.filename, Vector{T}, (sz,), meta.offset)
@@ -60,6 +60,9 @@ function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Vector{T}})
 end
 
 function save{T<:Real}(databytes::Vector{T}, meta::FileMeta, writer::FileBlobIO{Vector{T}})
+    @logmsg("save Vector{$T} using FileBlobIO{Vector{$T}}")
+    dn = dirname(meta.filename)
+    isdir(dn) || mkpath(dn)
     if writer.use_mmap && ismmapped(databytes)
         sync!(databytes, Base.MS_SYNC | Base.MS_INVALIDATE)
     else
@@ -75,6 +78,7 @@ function save{T<:Real}(databytes::Vector{T}, meta::FileMeta, writer::FileBlobIO{
 end
 
 function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Array{T}})
+    @logmsg("load using FileBlobIO{Array{$T}}")
     open(meta.filename, "r+") do fhandle
         seek(fhandle, meta.offset)
         pos1 = position(fhandle)
@@ -92,6 +96,7 @@ function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Array{T}})
 end
 
 function save{T<:Real}(M::Array{T}, meta::FileMeta, writer::FileBlobIO{Array{T}})
+    @logmsg("save Array{$T} using FileBlobIO{Array{$T}}")
     dn = dirname(meta.filename)
     isdir(dn) || mkpath(dn)
     if writer.use_mmap && ismmapped(M)
@@ -112,6 +117,7 @@ function save{T<:Real}(M::Array{T}, meta::FileMeta, writer::FileBlobIO{Array{T}}
 end
 
 function load(meta::FileMeta, reader::FileBlobIO{Any})
+    @logmsg("load using FileBlobIO{Any}")
     open(meta.filename, "r+") do fhandle
         seek(fhandle, meta.offset)
         return deserialize(SerializationState(fhandle))
@@ -119,6 +125,10 @@ function load(meta::FileMeta, reader::FileBlobIO{Any})
 end
 
 function save(data, meta::FileMeta, writer::FileBlobIO{Any})
+    @logmsg("save $(typeof(data)) using FileBlobIO{Any}")
+    dn = dirname(meta.filename)
+    isdir(dn) || mkpath(dn)
+    touch(meta.filename)
     open(meta.filename, "r+") do fhandle
         seek(fhandle, meta.offset)
         serialize(SerializationState(fhandle), data)
@@ -186,7 +196,6 @@ end
 
 BlobCollection(id::UUID) = BLOB_REGISTRY[id]
 
-const BLOB_REGISTRY = Dict{UUID,BlobCollection}()
 function register(coll::BlobCollection)
     @logmsg("registering coll $(coll.id) with $(length(coll.blobs)) blobs")
     BLOB_REGISTRY[coll.id] = coll

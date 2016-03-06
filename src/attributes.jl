@@ -137,8 +137,6 @@ function initnodemap(nodemap::NodeMap=NodeMap())
     nodemap
 end
 
-const DEF_NODE_MAP = initnodemap()
-
 # localto methods can be used to get a list of nodes, ips, hostnames that are local to the given entity as per the nodemap
 localto(ip::IPAddr, nodemap::NodeMap=DEF_NODE_MAP) = localto(get(nodemap.ipgroup, ip, Int[]), nodemap)
 localto(hostname::AbstractString, nodemap::NodeMap=DEF_NODE_MAP) = localto(get(nodemap.hostnamegroup, hostname, Int[]), nodemap)

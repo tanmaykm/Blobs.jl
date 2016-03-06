@@ -1,3 +1,5 @@
+__precompile__(true)
+
 module Blobs
 
 using Compat
@@ -14,6 +16,7 @@ export Node, NodeMap, nodeids, addnode, localto, islocal
 export BlobMeta, TypedMeta, FileMeta, FunctionMeta
 export BlobIO, NoopBlobIO, FileBlobIO, FunctionBlobIO
 export Blob, BlobCollection, blobids, load, save, serialize, deserialize, register, deregister, append!, flush, max_cached, max_cached!
+export ProcessGlobalBlob
 
 # enable logging only during debugging
 #using Logging
@@ -24,7 +27,12 @@ export Blob, BlobCollection, blobids, load, save, serialize, deserialize, regist
 #        debug($(esc(s)))
 #    end
 #end
+#macro logmsg(s)
+#end
 macro logmsg(s)
+    quote
+        info($(esc(s)))
+    end
 end
 
 
@@ -33,5 +41,12 @@ using .BlobCache
 
 include("attributes.jl")
 include("blob.jl")
+include("procglobal.jl")
+
+function __init__()
+    global const mmapped = Set{UInt}()
+    global const BLOB_REGISTRY = Dict{UUID,BlobCollection}()
+    global const DEF_NODE_MAP = initnodemap()
+end
 
 end # module
