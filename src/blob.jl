@@ -1,3 +1,17 @@
+# mmap helper
+
+ismmapped(a::Array) = (convert(UInt, pointer(a)) in mmapped)
+delmmapped(a::Array) = delete!(mmapped, convert(UInt, pointer(a)))
+syncmmapped(a::Array) = sync!(a, Base.MS_SYNC | Base.MS_INVALIDATE)
+function blobmmap{T<:Array}(file, ::Type{T}, dims, offset::Integer=Int64(0); grow::Bool=true, shared::Bool=true)
+    a = Mmap.mmap(file, T, dims, offset; grow=grow, shared=shared)
+    # Note: depends on https://github.com/JuliaLang/julia/pull/13995 for proper functioning
+    finalizer(a, delmmapped)
+    push!(mmapped, convert(UInt, pointer(a)))
+    a
+end
+
+# blob meta
 abstract BlobMeta
 
 type FileMeta <: BlobMeta
@@ -31,9 +45,10 @@ function locality{T}(::Type{FileBlobIO{T}}, nodemap::NodeMap=DEF_NODE_MAP)
 end
 
 function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Vector{T}})
+    @logmsg("load using FileBlobIO{Vector{$T}}")
     sz = floor(Int, meta.size / sizeof(T))
     if reader.use_mmap
-        return Mmap.mmap(meta.filename, Vector{T}, (sz,), meta.offset)
+        return blobmmap(meta.filename, Vector{T}, (sz,), meta.offset)
     else
         open(meta.filename) do f
             seek(f, meta.offset)
@@ -45,7 +60,10 @@ function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Vector{T}})
 end
 
 function save{T<:Real}(databytes::Vector{T}, meta::FileMeta, writer::FileBlobIO{Vector{T}})
-    if writer.use_mmap
+    @logmsg("save Vector{$T} using FileBlobIO{Vector{$T}}")
+    dn = dirname(meta.filename)
+    isdir(dn) || mkpath(dn)
+    if writer.use_mmap && ismmapped(databytes)
         sync!(databytes, Base.MS_SYNC | Base.MS_INVALIDATE)
     else
         touch(meta.filename)
@@ -58,6 +76,65 @@ function save{T<:Real}(databytes::Vector{T}, meta::FileMeta, writer::FileBlobIO{
     end
     nothing
 end
+
+function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Array{T}})
+    @logmsg("load using FileBlobIO{Array{$T}}")
+    open(meta.filename, "r+") do fhandle
+        seek(fhandle, meta.offset)
+        pos1 = position(fhandle)
+
+        hdrsz = read(fhandle, Int64)
+        pos1 += sizeof(hdrsz)
+
+        header = Array(Int64, hdrsz)
+        read!(fhandle, header)
+        pos1 += sizeof(header)
+
+        data = reader.use_mmap ? blobmmap(fhandle, Array{T,hdrsz}, tuple(header...), pos1) : read!(fhandle, Array(T, header...))
+        return data
+    end
+end
+
+function save{T<:Real}(M::Array{T}, meta::FileMeta, writer::FileBlobIO{Array{T}})
+    @logmsg("save Array{$T} using FileBlobIO{Array{$T}}")
+    dn = dirname(meta.filename)
+    isdir(dn) || mkpath(dn)
+    if writer.use_mmap && ismmapped(M)
+        syncmmapped(M)
+    else
+        header = Int64[size(M)...]
+        hdrsz = Int64(length(header))
+
+        touch(meta.filename)
+        open(meta.filename, "r+") do fhandle
+            seek(fhandle, meta.offset)
+            write(fhandle, hdrsz)
+            write(fhandle, header)
+            write(fhandle, M)
+        end
+    end
+    nothing
+end
+
+function load(meta::FileMeta, reader::FileBlobIO{Any})
+    @logmsg("load using FileBlobIO{Any}")
+    open(meta.filename, "r+") do fhandle
+        seek(fhandle, meta.offset)
+        return deserialize(SerializationState(fhandle))
+    end
+end
+
+function save(data, meta::FileMeta, writer::FileBlobIO{Any})
+    @logmsg("save $(typeof(data)) using FileBlobIO{Any}")
+    dn = dirname(meta.filename)
+    isdir(dn) || mkpath(dn)
+    touch(meta.filename)
+    open(meta.filename, "r+") do fhandle
+        seek(fhandle, meta.offset)
+        serialize(SerializationState(fhandle), data)
+    end
+end
+
 
 # function blob io
 # function outputs have strong locality only to the pid
@@ -100,14 +177,14 @@ islocal(blob::Blob, nodeid::Int) = islocal(blob.locality, nodeid)
 type BlobCollection{T, M<:Mutability}
     id::UUID
     mutability::M
-    reader::BlobIO{T}
+    reader::BlobIO
     nodemap::NodeMap
     blobs::Dict{UUID,Blob}
     maxcache::Int
     cache::LRU{UUID,T}
 end
 
-function BlobCollection{T,M<:Mutability}(::Type{T}, mutability::M, reader::BlobIO{T}; maxcache::Int=10, nodemap::NodeMap=DEF_NODE_MAP, id::UUID=uuid4())
+function BlobCollection{T,M<:Mutability}(::Type{T}, mutability::M, reader::BlobIO; maxcache::Int=10, nodemap::NodeMap=DEF_NODE_MAP, id::UUID=uuid4())
     L = typeof(locality(reader))
     blobs = Dict{UUID,Blob{T,L}}()
     cache = LRU{UUID,T}(maxcache)
@@ -119,7 +196,6 @@ end
 
 BlobCollection(id::UUID) = BLOB_REGISTRY[id]
 
-const BLOB_REGISTRY = Dict{UUID,BlobCollection}()
 function register(coll::BlobCollection)
     @logmsg("registering coll $(coll.id) with $(length(coll.blobs)) blobs")
     BLOB_REGISTRY[coll.id] = coll
@@ -139,6 +215,13 @@ function deregister(coll::BlobCollection, wrkrs::Vector{Int})
     end
 end
 
+max_cached(coll::BlobCollection) = coll.maxcache
+function max_cached!(coll::BlobCollection, maxcache::Int)
+    coll.maxcache = maxcache
+    resize!(coll.cache, maxcache)
+    nothing
+end
+
 function append!{T,L}(coll::Union{UUID,BlobCollection}, ::Type{T}, blobmeta::BlobMeta, ::Type{L}, v::Nullable{T}=Nullable{T}())
     blob = Blob(T, L, blobmeta)
     isnull(v) || (blob.data.value = get(v))
@@ -153,7 +236,6 @@ append!(coll::UUID, blob::Blob) = append!(BlobCollection(id::UUID), blob)
 function append!(coll::BlobCollection, blob::Blob)
     (blob.data.value == nothing) || (coll.cache[blob.id] = blob.data.value)
     coll.blobs[blob.id] = blob
-    
 end
 blobids(coll::BlobCollection) = keys(coll.blobs)
 
@@ -197,6 +279,19 @@ function save(coll::BlobCollection)
     end
 end
 
+flush(coll::BlobCollection, wrkrs::Vector{Int}; callback::Bool=true) = flush(coll.id, wrkrs; callback=callback)
+function flush(collid::UUID, wrkrs::Vector{Int}; callback::Bool=true)
+    @sync for w in wrkrs
+        @async remotecall_wait((collid)->flush(collid; callback=callback), w, collid)
+    end
+end
+flush(collid::UUID; callback::Bool=true) = flush(BlobCollection(collid); callback=callback)
+function flush(coll::BlobCollection; callback::Bool=true)
+    for blob in values(coll.blobs)
+        flush(coll, blob; callback=callback)
+    end
+end
+
 
 # mutability of a blob collection may be switched at run time, whithout affecting anything else.
 as_mutable{T,M<:Mutable}(coll::BlobCollection{T,M}, mutability::Mutable) = coll
@@ -217,7 +312,7 @@ function load_local(collid::UUID, blob::UUID)
     coll = BlobCollection(collid)
     load_local(coll, coll.blobs[blob])
 end
-function load_local{T}(coll::BlobCollection{T}, blob::Blob{T})
+function load_local{T}(coll::BlobCollection, blob::Blob{T})
     if !haskey(coll.cache, blob.id)
         val = blob.data.value
         (val == nothing) && (val = load(blob.metadata, coll.reader))
@@ -229,8 +324,8 @@ end
 
 load(collid::UUID, blobid::UUID) = load(BlobCollection(collid), blobid)
 load(coll::BlobCollection, blobid::UUID) = load(coll, coll.blobs[blobid])
-load{T,L<:WeakLocality}(coll::BlobCollection{T}, blob::Blob{T,L}) = load_local(coll, blob)
-function load{T,L<:StrongLocality}(coll::BlobCollection{T}, blob::Blob{T,L})
+load{T,L<:WeakLocality}(coll::BlobCollection, blob::Blob{T,L}) = load_local(coll, blob)
+function load{T,L<:StrongLocality}(coll::BlobCollection, blob::Blob{T,L})
     if !haskey(coll.cache, blob.id)
         val = blob.data.value
         if val == nothing
@@ -244,10 +339,18 @@ function load{T,L<:StrongLocality}(coll::BlobCollection{T}, blob::Blob{T,L})
 end
 
 save(collid::UUID, blobid::UUID) = save(BlobCollection(collid), blobid)
-save{T,M<:Mutable}(coll::BlobCollection{T,M}, blobid::UUID) = save(coll, coll.blobs[blobid])
+save(coll::BlobCollection, blobid::UUID) = save(coll, coll.blobs[blobid])
 function save{T,M<:Mutable}(coll::BlobCollection{T,M}, blob::Blob)
     if haskey(coll.cache, blob.id)
         save(blob.data.value, blob.metadata, coll.mutability.writer)
+    end
+end
+
+flush(collid::UUID, blobid::UUID; callback::Bool=true) = flush(BlobCollection(collid), blobid; callback=callback)
+flush(coll::BlobCollection, blobid::UUID; callback::Bool=true) = flush(coll, coll.blobs[blobid]; callback=callback)
+function flush(coll::BlobCollection, blob::Blob; callback::Bool=true)
+    if haskey(coll.cache, blob.id)
+        delete!(coll.cache, blob.id; callback=callback)
     end
 end
 
