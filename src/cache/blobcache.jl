@@ -1,6 +1,6 @@
 module BlobCache
 
-export LRU, @get!
+export LRU, @get!, maxcount, maxmem
 
 include("list.jl")
 
@@ -13,12 +13,25 @@ type LRU{K,V} <: Associative{K,V}
     q::LRUList{K, V}
     maxsize::Int
     cb::Function
+    isfull::Function
 
-    LRU(m::Int=__MAXCACHE__; callback::Function=noop) = new(Dict{K, V}(), LRUList{K, V}(), m, callback)
+    LRU(m::Int=__MAXCACHE__; callback::Function=noop, strategy::Function=maxcount) = new(Dict{K, V}(), LRUList{K, V}(), m, callback, strategy)
 end
 LRU(m::Int=__MAXCACHE__) = LRU{Any, Any}(m)
 
-Base.show{K, V}(io::IO, lru::LRU{K, V}) = print(io,"LRU{$K, $V}($(lru.maxsize))")
+function maxcount(lru::LRU)
+    length(lru) > lru.maxsize
+end
+
+function maxmem(lru::LRU)
+    memused = 0
+    for v in values(lru.ht)
+        memused += Base.summarysize(v.v)
+    end
+    memused > lru.maxsize
+end
+
+Base.show{K, V}(io::IO, lru::LRU{K, V}) = print(io,"LRU{$K, $V}($(lru.maxsize) $(lru.isfull))")
 
 Base.start(lru::LRU) = start(lru.ht)
 Base.next(lru::LRU, state) = next(lru.ht, state)
@@ -73,30 +86,26 @@ function Base.setindex!{K, V}(lru::LRU{K, V}, v, key)
         item = lru.ht[key]
         item.v = v
         move_to_front!(lru.q, item)
-    elseif length(lru) == lru.maxsize
-        # At capacity. Roll the list so last el is now first, remove the old
-        # data, and update new data in place.
-        rotate!(lru.q)
-        item = first(lru.q)
-        lru.cb(item.k, item.v)
-        delete!(lru.ht, item.k)
-        item.k = key
-        item.v = v
-        lru.ht[key] = item
     else
         item = LRUNode{K, V}(key, v)
         unshift!(lru.q, item)
         lru.ht[key] = item
     end
+
+    while lru.isfull(lru)
+        rm = pop!(lru.q)
+        delete!(lru, rm.k)
+    end
+
     return lru
 end
 
 function Base.resize!(lru::LRU, n::Int)
     n < 0 && error("size must be a positive integer")
     lru.maxsize = n
-    for i in 1:(length(lru) - lru.maxsize)
+    while lru.isfull(lru)
         rm = pop!(lru.q)
-        delete!(lru.ht, rm.k)
+        delete!(lru, rm.k)
     end
     return lru
 end
