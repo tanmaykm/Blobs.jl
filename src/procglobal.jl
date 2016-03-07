@@ -3,14 +3,15 @@ const MAXBLOBSZ = 128*1024*1024
 
 type ProcessGlobalBlob
     maxcache::Int
+    strategy::Function
     storepath::AbstractString
     coll::BlobCollection
 
-    function ProcessGlobalBlob(maxcache::Int, storepath::AbstractString=tempdir())
+    function ProcessGlobalBlob(maxcache::Int, strategy::Function, storepath::AbstractString=tempdir())
         io = FileBlobIO(Any, true)
-        coll = BlobCollection(Any, Mutable(MAXBLOBSZ, io), io; maxcache=maxcache)
+        coll = BlobCollection(Any, Mutable(MAXBLOBSZ, io), io; maxcache=maxcache, strategy=strategy)
         
-        new(maxcache, storepath, coll)
+        new(maxcache, strategy, storepath, coll)
     end
 end
 

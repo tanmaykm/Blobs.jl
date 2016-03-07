@@ -184,10 +184,11 @@ type BlobCollection{T, M<:Mutability}
     cache::LRU{UUID,T}
 end
 
-function BlobCollection{T,M<:Mutability}(::Type{T}, mutability::M, reader::BlobIO; maxcache::Int=10, nodemap::NodeMap=DEF_NODE_MAP, id::UUID=uuid4())
+function BlobCollection{T,M<:Mutability}(::Type{T}, mutability::M, reader::BlobIO; maxcache::Int=10, strategy::Function=maxcount, nodemap::NodeMap=DEF_NODE_MAP, id::UUID=uuid4())
     L = typeof(locality(reader))
     blobs = Dict{UUID,Blob{T,L}}()
-    cache = LRU{UUID,T}(maxcache)
+    @logmsg("creating blobcollection with $maxcache $strategy")
+    cache = LRU{UUID,T}(maxcache; strategy=strategy)
     coll = BlobCollection{T,M}(id, mutability, reader, nodemap, blobs, maxcache, cache)
     coll.cache.cb = (blobid,data)->save(coll, blobid)
     register(coll)

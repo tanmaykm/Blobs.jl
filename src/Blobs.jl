@@ -17,6 +17,7 @@ export BlobMeta, TypedMeta, FileMeta, FunctionMeta
 export BlobIO, NoopBlobIO, FileBlobIO, FunctionBlobIO
 export Blob, BlobCollection, blobids, load, save, serialize, deserialize, register, deregister, append!, flush, max_cached, max_cached!
 export ProcessGlobalBlob
+export maxmem, maxcount
 
 # enable logging only during debugging
 #using Logging
