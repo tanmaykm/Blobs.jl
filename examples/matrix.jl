@@ -3,9 +3,9 @@ module MatrixBlobs
 using Blobs
 import Blobs: @logmsg, load, save, flush
 using Base.Random: UUID
-import Base: serialize, deserialize, getindex, setindex!, size, append!, flush
+import Base: serialize, deserialize, getindex, setindex!, size, append!, flush, *
 
-export DenseMatBlobs, SparseMatBlobs, size, getindex, setindex!, serialize, deserialize, save, load, flush
+export DenseMatBlobs, SparseMatBlobs, size, getindex, setindex!, serialize, deserialize, save, load, flush, *
 
 const BYTES_128MB = 128 * 1024 * 1024
 
@@ -231,10 +231,28 @@ function getindex{T,N}(dm::DenseMatBlobs{T,1,N}, i1::Int, ::Colon)
     part[reli1,:]
 end
 
+function getindex{T,N}(dm::DenseMatBlobs{T,1,N}, idxs, ::Colon)
+    res = Array(T, length(idxs), N)
+    for residx in 1:length(idxs)
+        idx = idxs[residx]
+        res[residx,:] = dm[idx,:]
+    end
+    res
+end
+
 function getindex{T,N}(dm::DenseMatBlobs{T,2,N}, ::Colon, i2::Int)
     part, range = load(dm, i2)
     reli1, reli2 = relidx(range, 2, 1, i2)
     part[:,reli2]
+end
+
+function getindex{T,N}(dm::DenseMatBlobs{T,2,N}, ::Colon, idxs)
+    res = Array(T, N, length(idxs))
+    for residx in 1:length(idxs)
+        idx = idxs[residx]
+        res[:, residx] = dm[:, idx]
+    end
+    res
 end
 
 setindex!{T,D,N}(dm::DenseMatBlobs{T,D,N}, v::T, i::Int) = setindex!(dm, v, ind2sub(size(dm), i)...)
@@ -255,6 +273,29 @@ function setindex!{T,N}(dm::DenseMatBlobs{T,2,N}, v, ::Colon, i2::Int)
     part, range = load(dm, i2)
     reli1, reli2 = relidx(range, 2, 1, i2)
     part[:,reli2] = v
+end
+#=
+function *{T1,T2}(A::Vector{T1}, B::DenseMatBlobs{T2,1})
+    T = promote_type(T1, T2)
+    res = Array(T, size(B, 2))
+    for idx in 1:length(B.splits)
+        p = B.splits[idx]
+        part, r = load(B, first(p.first))
+        res[r] = v * part
+    end
+    res
+end
+=#
+function *{T1,T2}(A::Matrix{T1}, B::DenseMatBlobs{T2,2})
+    m,n = size(B)
+    (size(A, 2) == m) || throw(DimensionMismatch("A has dimensions $(size(A)) but B has dimensions $(size(B))"))
+    res = Array(promote_type(T1,T2), 1, n)
+    for idx in 1:length(B.splits)
+        p = B.splits[idx]
+        part, r = load(B, first(p.first))
+        res[r] = A * part
+    end
+    res
 end
 
 function deserialize{T,D,N}(s::SerializationState, ::Type{DenseMatBlobs{T,D,N}})

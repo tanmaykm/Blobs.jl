@@ -28,13 +28,13 @@ export maxmem, maxcount
 #        debug($(esc(s)))
 #    end
 #end
-#macro logmsg(s)
-#end
 macro logmsg(s)
-    quote
-        info($(esc(s)))
-    end
 end
+#macro logmsg(s)
+#    quote
+#        info($(esc(s)))
+#    end
+#end
 
 
 include("cache/blobcache.jl")
