@@ -20,6 +20,17 @@ export ProcessGlobalBlob
 export maxmem, maxcount
 
 # enable logging only during debugging
+if (Base.VERSION < v"0.5.0-")
+threadid() = 1
+else
+using Base.Threads
+end
+
+function tstr()
+    t = time()
+    string(Libc.strftime("%Y-%m-%dT%H:%M:%S",t), Libc.strftime("%z",t)[1:end-2], ":", Libc.strftime("%z",t)[end-1:end])
+end
+
 #using Logging
 #const logger = Logging.configure(level=DEBUG)
 ##const logger = Logging.configure(filename="/tmp/blobs$(getpid()).log", level=DEBUG)
@@ -32,7 +43,7 @@ macro logmsg(s)
 end
 #macro logmsg(s)
 #    quote
-#        info($(esc(s)))
+#        info(tstr(), " [", myid(), "-", threadid(), "] ", $(esc(s)))
 #    end
 #end
 

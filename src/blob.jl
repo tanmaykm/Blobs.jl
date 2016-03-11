@@ -332,7 +332,7 @@ function load{T,L<:StrongLocality}(coll::BlobCollection, blob::Blob{T,L})
         if val == nothing
             # select a node from blob's local nodes
             fetchfrom = select_local(coll, blob)
-            val = remotecall_fetch(load_local, fetchfrom, coll.id, blob.id)
+            val = (fetchfrom == myid()) ? load_local(coll.id, blob.id) : remotecall_fetch(load_local, fetchfrom, coll.id, blob.id)
         end
         blob.data.value = coll.cache[blob.id] = val
     end
