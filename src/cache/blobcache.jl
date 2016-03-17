@@ -93,7 +93,7 @@ function Base.setindex!{K, V}(lru::LRU{K, V}, v, key)
     end
 
     while lru.isfull(lru)
-        rm = pop!(lru.q)
+        rm = last(lru.q)
         delete!(lru, rm.k)
     end
 
@@ -104,7 +104,7 @@ function Base.resize!(lru::LRU, n::Int)
     n < 0 && error("size must be a positive integer")
     lru.maxsize = n
     while lru.isfull(lru)
-        rm = pop!(lru.q)
+        rm = last(lru.q)
         delete!(lru, rm.k)
     end
     return lru

@@ -315,8 +315,7 @@ function load_local(collid::UUID, blob::UUID)
 end
 function load_local{T}(coll::BlobCollection, blob::Blob{T})
     if !haskey(coll.cache, blob.id)
-        val = blob.data.value
-        (val == nothing) && (val = load(blob.metadata, coll.reader))
+        val = load(blob.metadata, coll.reader)
         blob.data.value = coll.cache[blob.id] = val
         blob.locality = locality(coll.reader, coll.nodemap)
     end
@@ -328,12 +327,9 @@ load(coll::BlobCollection, blobid::UUID) = load(coll, coll.blobs[blobid])
 load{T,L<:WeakLocality}(coll::BlobCollection, blob::Blob{T,L}) = load_local(coll, blob)
 function load{T,L<:StrongLocality}(coll::BlobCollection, blob::Blob{T,L})
     if !haskey(coll.cache, blob.id)
-        val = blob.data.value
-        if val == nothing
-            # select a node from blob's local nodes
-            fetchfrom = select_local(coll, blob)
-            val = (fetchfrom == myid()) ? load_local(coll.id, blob.id) : remotecall_fetch(load_local, fetchfrom, coll.id, blob.id)
-        end
+        # select a node from blob's local nodes
+        fetchfrom = select_local(coll, blob)
+        val = (fetchfrom == myid()) ? load_local(coll.id, blob.id) : remotecall_fetch(load_local, fetchfrom, coll.id, blob.id)
         blob.data.value = coll.cache[blob.id] = val
     end
     (coll.cache[blob.id])::T
