@@ -1,7 +1,7 @@
 module MatrixBlobs
 
 using Blobs
-import Blobs: @logmsg, load, save, flush
+import Blobs: @logmsg, load, save, flush, locality
 using Base.Random: UUID
 import Base: serialize, deserialize, getindex, setindex!, size, append!, flush, *
 
@@ -37,6 +37,8 @@ end
 
 typealias MatBlobs Union{SparseMatBlobs,DenseMatBlobs}
 
+
+locality(dm::MatBlobs) = locality(dm.coll.reader)
 
 size(dm::MatBlobs) = dm.sz
 
@@ -166,10 +168,10 @@ function deserialize{Tv,Ti}(s::SerializationState, ::Type{SparseMatBlobs{Tv,Ti}}
     SparseMatBlobs{Tv,Ti}(metadir, sz, splits, coll)
 end
 
-function SparseMatBlobs{Tv,Ti}(::Type{Tv}, ::Type{Ti}, metadir::AbstractString; maxcache::Int=10)
+function SparseMatBlobs{Tv,Ti}(::Type{Tv}, ::Type{Ti}, metadir::AbstractString, io::BlobIO=FileBlobIO(SparseMatrixCSC{Tv,Ti}, true); maxcache::Int=10)
     T = SparseMatrixCSC{Tv,Ti}
-    mut = Mutable(BYTES_128MB, FileBlobIO(T, true))
-    coll = BlobCollection(T, mut, FileBlobIO(T, true); maxcache=maxcache)
+    mut = Mutable(BYTES_128MB, io)
+    coll = BlobCollection(T, mut, io; maxcache=maxcache)
     SparseMatBlobs{Tv,Ti}(metadir, (0,0), Pair[], coll)
 end
 
@@ -188,7 +190,7 @@ function append!{Tv,Ti}(sp::SparseMatBlobs{Tv,Ti}, S::SparseMatrixCSC{Tv,Ti})
     fname = joinpath(sp.metadir, string(length(sp.splits)+1))
     meta = FileMeta(fname, 0, sersz(S))
 
-    blob = append!(sp.coll, SparseMatrixCSC{Tv,Ti}, meta, StrongLocality(myid()), Nullable(S))
+    blob = append!(sp.coll, SparseMatrixCSC{Tv,Ti}, meta, locality(sp), Nullable(S))
     push!(sp.splits, idxrange => blob.id)
     @logmsg("appending blob $(blob.id) of size: $(size(S)) for idxrange: $idxrange, sersz: $(meta.size)")
     blob
@@ -314,9 +316,8 @@ function deserialize{T,D,N}(s::SerializationState, ::Type{DenseMatBlobs{T,D,N}})
     DenseMatBlobs{T,D,N}(metadir, sz, splits, coll)
 end
 
-function DenseMatBlobs{Tv}(::Type{Tv}, D::Int, N::Int, metadir::AbstractString; maxcache::Int=10)
+function DenseMatBlobs{Tv}(::Type{Tv}, D::Int, N::Int, metadir::AbstractString, io::BlobIO=FileBlobIO(Array{Tv}, true); maxcache::Int=10)
     T = Matrix{Tv}
-    io = FileBlobIO(Array{Tv}, true)
     mut = Mutable(BYTES_128MB, io)
     coll = BlobCollection(T, mut, io; maxcache=maxcache)
     DenseMatBlobs{Tv,D,N}(metadir, (0,0), Pair[], coll)
@@ -340,7 +341,7 @@ function append!{Tv,D,N}(dm::DenseMatBlobs{Tv,D,N}, M::Matrix{Tv})
     fname = joinpath(dm.metadir, string(length(dm.splits)+1))
     meta = FileMeta(fname, 0, sersz(M))
 
-    blob = append!(dm.coll, Matrix{Tv}, meta, StrongLocality(myid()), Nullable(M))
+    blob = append!(dm.coll, Matrix{Tv}, meta, locality(dm), Nullable(M))
     push!(dm.splits, idxrange => blob.id)
     @logmsg("appending blob $(blob.id) of size: $(size(M)) for idxrange: $idxrange, sersz: $(meta.size)")
     blob
