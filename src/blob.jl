@@ -2,7 +2,7 @@
 
 ismmapped(a::Array) = (convert(UInt, pointer(a)) in mmapped)
 delmmapped(a::Array) = delete!(mmapped, convert(UInt, pointer(a)))
-syncmmapped(a::Array) = sync!(a, Base.MS_SYNC | Base.MS_INVALIDATE)
+syncmmapped(a::Array) = sync!(a, Base.Mmap.MS_SYNC | Base.Mmap.MS_INVALIDATE)
 function blobmmap{T<:Array}(file, ::Type{T}, dims, offset::Integer=Int64(0); grow::Bool=true, shared::Bool=true)
     a = Mmap.mmap(file, T, dims, offset; grow=grow, shared=shared)
     # Note: depends on https://github.com/JuliaLang/julia/pull/13995 for proper functioning
@@ -64,7 +64,7 @@ function save{T<:Real}(databytes::Vector{T}, meta::FileMeta, writer::FileBlobIO{
     dn = dirname(meta.filename)
     isdir(dn) || mkpath(dn)
     if writer.use_mmap && ismmapped(databytes)
-        sync!(databytes, Base.MS_SYNC | Base.MS_INVALIDATE)
+        sync!(databytes, Base.Mmap.MS_SYNC | Base.Mmap.MS_INVALIDATE)
     else
         touch(meta.filename)
         open(meta.filename, "r+") do f
