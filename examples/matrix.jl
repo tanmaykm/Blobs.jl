@@ -22,7 +22,7 @@ end
 type SparseMatBlobs{Tv,Ti} <: AbstractMatrix{Tv}
     metadir::AbstractString
     sz::Tuple
-    splits::Vector{Pair}
+    splits::Vector
     coll::BlobCollection{SparseMatrixCSC{Tv,Ti}}
 end
 
@@ -31,7 +31,7 @@ end
 type DenseMatBlobs{T,D,N} <: AbstractMatrix{T}
     metadir::AbstractString
     sz::Tuple
-    splits::Vector{Pair}        # keep a mapping of index ranges to blobs
+    splits::Vector        # keep a mapping of index ranges to blobs
     coll::BlobCollection{Matrix{T}}
 end
 
