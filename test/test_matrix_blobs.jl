@@ -50,7 +50,11 @@ function test_sparse_mat_blobs()
 
     t1 = time()
     for idx in 1:FULLM
-        @test isa(smatblobs[:,idx], SparseVector)
+        if isless(Base.VERSION, v"0.5.0-")
+            @test isa(smatblobs[:,idx], SparseMatrixCSC)
+        else
+            @test isa(smatblobs[:,idx], SparseVector)
+        end
     end
     t2 = time()
     td = t2 - t1
