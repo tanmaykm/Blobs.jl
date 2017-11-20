@@ -2,8 +2,8 @@
 
 ismmapped(a::Array) = (convert(UInt, pointer(a)) in mmapped)
 delmmapped(a::Array) = delete!(mmapped, convert(UInt, pointer(a)))
-syncmmapped(a::Array) = sync!(a, Base.Mmap.MS_SYNC | Base.Mmap.MS_INVALIDATE)
-function blobmmap{T<:Array}(file, ::Type{T}, dims, offset::Integer=Int64(0); grow::Bool=true, shared::Bool=true)
+syncmmapped(a::Array) = sync!(a, MS_SYNC | MS_INVALIDATE)
+function blobmmap(file, ::Type{T}, dims, offset::Integer=Int64(0); grow::Bool=true, shared::Bool=true) where T <: Array
     a = Mmap.mmap(file, T, dims, offset; grow=grow, shared=shared)
     # Note: depends on https://github.com/JuliaLang/julia/pull/13995 for proper functioning
     finalizer(a, delmmapped)
@@ -12,39 +12,39 @@ function blobmmap{T<:Array}(file, ::Type{T}, dims, offset::Integer=Int64(0); gro
 end
 
 # blob meta
-abstract BlobMeta
+abstract type BlobMeta end
 
-type FileMeta <: BlobMeta
-    filename::AbstractString
+mutable struct FileMeta <: BlobMeta
+    filename::String
     offset::Int
     size::Int
 end
 
-type FunctionMeta <: BlobMeta
+mutable struct FunctionMeta <: BlobMeta
     params::Tuple
 end
 
 # Typed meta holds multiple metadata for different reader types.
 # Reader types have predefined mapping to metadata types
 # TODO: rename MetaCollection
-type TypedMeta <: BlobMeta
+mutable struct TypedMeta <: BlobMeta
     metadict::Dict{Type,BlobMeta}
     function TypedMeta(m...)
         new(Dict{Type,BlobMeta}(m...))
     end
 end
 
-load{T}(meta::TypedMeta, reader::BlobIO{T}) = load(meta.metadict[typeof(reader)], reader)
-save{T}(databytes::T, meta::TypedMeta, writer::BlobIO{T}) = save(databytes, meta.metadict[typeof(writer)], writer)
+load(meta::TypedMeta, reader::BlobIO{T}) where T = load(meta.metadict[typeof(reader)], reader)
+save(databytes::T, meta::TypedMeta, writer::BlobIO{T}) where T = save(databytes, meta.metadict[typeof(writer)], writer)
 
 # file blob io
 # files have strong locality to the machine
-function locality{T}(::Type{FileBlobIO{T}}, nodemap::NodeMap=DEF_NODE_MAP)
+function locality(::Type{FileBlobIO{T}}, nodemap::NodeMap=DEF_NODE_MAP) where T
     nodes, ips, hns = localto(myid(), nodemap)
     StrongLocality(nodes..., ips..., hns...)
 end
 
-function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Vector{T}})
+function load(meta::FileMeta, reader::FileBlobIO{Vector{T}}) where T <: Real
     @logmsg("load using FileBlobIO{Vector{$T}}")
     sz = floor(Int, meta.size / sizeof(T))
     if reader.use_mmap
@@ -52,19 +52,19 @@ function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Vector{T}})
     else
         open(meta.filename) do f
             seek(f, meta.offset)
-            databytes = Array(T, sz)
+            databytes = Array{T}(sz)
             read!(f, databytes) 
             return databytes
         end
     end
 end
 
-function save{T<:Real}(databytes::Vector{T}, meta::FileMeta, writer::FileBlobIO{Vector{T}})
+function save(databytes::Vector{T}, meta::FileMeta, writer::FileBlobIO{Vector{T}}) where T <: Real
     @logmsg("save Vector{$T} using FileBlobIO{Vector{$T}}")
     dn = dirname(meta.filename)
     isdir(dn) || mkpath(dn)
     if writer.use_mmap && ismmapped(databytes)
-        sync!(databytes, Base.Mmap.MS_SYNC | Base.Mmap.MS_INVALIDATE)
+        sync!(databytes, MS_SYNC | MS_INVALIDATE)
     else
         touch(meta.filename)
         open(meta.filename, "r+") do f
@@ -77,7 +77,7 @@ function save{T<:Real}(databytes::Vector{T}, meta::FileMeta, writer::FileBlobIO{
     nothing
 end
 
-function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Array{T}})
+function load(meta::FileMeta, reader::FileBlobIO{Array{T}}) where T <: Real
     @logmsg("load using FileBlobIO{Array{$T}}")
     open(meta.filename, "r+") do fhandle
         seek(fhandle, meta.offset)
@@ -86,16 +86,16 @@ function load{T<:Real}(meta::FileMeta, reader::FileBlobIO{Array{T}})
         hdrsz = read(fhandle, Int64)
         pos1 += sizeof(hdrsz)
 
-        header = Array(Int64, hdrsz)
+        header = Array{Int64}(hdrsz)
         read!(fhandle, header)
         pos1 += sizeof(header)
 
-        data = reader.use_mmap ? blobmmap(fhandle, Array{T,hdrsz}, tuple(header...), pos1) : read!(fhandle, Array(T, header...))
+        data = reader.use_mmap ? blobmmap(fhandle, Array{T,hdrsz}, tuple(header...), pos1) : read!(fhandle, Array{T}(header...))
         return data
     end
 end
 
-function save{T<:Real}(M::Array{T}, meta::FileMeta, writer::FileBlobIO{Array{T}})
+function save(M::Array{T}, meta::FileMeta, writer::FileBlobIO{Array{T}}) where T <: Real
     @logmsg("save Array{$T} using FileBlobIO{Array{$T}}")
     dn = dirname(meta.filename)
     isdir(dn) || mkpath(dn)
@@ -138,23 +138,23 @@ end
 
 # function blob io
 # function outputs have strong locality only to the pid
-locality{T}(::Type{FunctionBlobIO{T}}, nodemap::NodeMap=DEF_NODE_MAP) = StrongLocality(myid())
+locality(::Type{FunctionBlobIO{T}}, nodemap::NodeMap=DEF_NODE_MAP) where T = StrongLocality(myid())
 
-load{T<:Real}(meta::FunctionMeta, fnio::FunctionBlobIO{Vector{T}}) = fnio.reader(meta.params...)
-function save{T<:Real}(databytes::Vector{T}, meta::FunctionMeta, fnio::FunctionBlobIO{Vector{T}})
+load(meta::FunctionMeta, fnio::FunctionBlobIO{Vector{T}}) where T <: Real = fnio.reader(meta.params...)
+function save(databytes::Vector{T}, meta::FunctionMeta, fnio::FunctionBlobIO{Vector{T}}) where T <: Real
     fnio.writer(databytes, meta.params...)
     nothing
 end
 
 # Blobs
-type Blob{T,L}
+mutable struct Blob{T,L}
     id::UUID
     metadata::BlobMeta
     locality::L
     data::WeakRef
 end
-Blob{T,L}(::Type{T}, metadata::BlobMeta, locality::L, id::UUID=uuid4()) = Blob{T,L}(id, metadata, locality, WeakRef())
-Blob{T,L}(::Type{T}, ::Type{L}, metadata::BlobMeta, nodeid::Union{Int,Vector,Tuple}=myid(), id::UUID=uuid4()) = Blob{T,L}(id, metadata, L(nodeid...), WeakRef())
+Blob(::Type{T}, metadata::BlobMeta, locality::L, id::UUID=uuid4()) where {T, L} = Blob{T,L}(id, metadata, locality, WeakRef())
+Blob(::Type{T}, ::Type{L}, metadata::BlobMeta, nodeid::Union{Int,Vector,Tuple}=myid(), id::UUID=uuid4()) where {T, L} = Blob{T,L}(id, metadata, L(nodeid...), WeakRef())
 
 function serialize(s::SerializationState, blob::Blob)
     Serializer.serialize_type(s, typeof(blob))
@@ -163,7 +163,7 @@ function serialize(s::SerializationState, blob::Blob)
     serialize(s, blob.locality)
 end
 
-function deserialize{T,L}(s::SerializationState, ::Type{Blob{T,L}})
+function deserialize(s::SerializationState, ::Type{Blob{T,L}}) where {T, L}
     id = deserialize(s)
     metadata = deserialize(s)
     locality = deserialize(s)
@@ -174,7 +174,7 @@ islocal(blob::Blob) = islocal(blob, myid())
 islocal(blob::Blob, nodeid::Int) = islocal(blob.locality, nodeid)
 
 # Blob Collections
-type BlobCollection{T, M<:Mutability}
+mutable struct BlobCollection{T, M<:Mutability}
     id::UUID
     mutability::M
     reader::BlobIO
@@ -184,7 +184,7 @@ type BlobCollection{T, M<:Mutability}
     cache::LRU{UUID,T}
 end
 
-function BlobCollection{T,M<:Mutability}(::Type{T}, mutability::M, reader::BlobIO; maxcache::Int=10, strategy::Function=maxcount, nodemap::NodeMap=DEF_NODE_MAP, id::UUID=uuid4())
+function BlobCollection(::Type{T}, mutability::M, reader::BlobIO; maxcache::Int=10, strategy::Function=maxcount, nodemap::NodeMap=DEF_NODE_MAP, id::UUID=uuid4()) where {T, M<:Mutability}
     L = typeof(locality(reader))
     blobs = Dict{UUID,Blob{T,L}}()
     @logmsg("creating blobcollection with $maxcache $strategy")
@@ -223,12 +223,12 @@ function max_cached!(coll::BlobCollection, maxcache::Int)
     nothing
 end
 
-function append!{T,L}(coll::Union{UUID,BlobCollection}, ::Type{T}, blobmeta::BlobMeta, ::Type{L}, v::Nullable{T}=Nullable{T}())
+function append!(coll::Union{UUID,BlobCollection}, ::Type{T}, blobmeta::BlobMeta, ::Type{L}, v::Nullable{T}=Nullable{T}()) where {T, L}
     blob = Blob(T, L, blobmeta)
     isnull(v) || (blob.data.value = get(v))
     append!(coll, blob)
 end
-function append!{T}(coll::Union{UUID,BlobCollection}, ::Type{T}, blobmeta::BlobMeta, loc::Locality, v::Nullable{T}=Nullable{T}())
+function append!(coll::Union{UUID,BlobCollection}, ::Type{T}, blobmeta::BlobMeta, loc::Locality, v::Nullable{T}=Nullable{T}()) where T
     blob = Blob(T, blobmeta, loc)
     isnull(v) || (blob.data.value = get(v))
     append!(coll, blob)
@@ -244,7 +244,7 @@ blobids(coll::BlobCollection) = keys(coll.blobs)
 # Save just stores the list of blobs and their metadata.
 # When loaded in a different environment, the mutability and reader types, and the nodemap may be different.
 # Load needs to be provided with a compatible BlobCollection to read the blob contents.
-function load(coll::BlobCollection, filename::AbstractString)
+function load(coll::BlobCollection, filename::String)
     open(filename) do f
         load(coll, f)
     end
@@ -257,7 +257,7 @@ function load(coll::BlobCollection, io::IO)
     coll
 end
 save(collid::UUID, io::IO, wrkrs::Vector{Int}) = save(BlobCollection(collid), io, wrkrs)
-function save(coll::BlobCollection, filename::AbstractString, wrkrs::Vector{Int})
+function save(coll::BlobCollection, filename::String, wrkrs::Vector{Int})
     open(filename, "w") do f
         save(coll, f, wrkrs)
     end
@@ -295,11 +295,11 @@ end
 
 
 # mutability of a blob collection may be switched at run time, whithout affecting anything else.
-as_mutable{T,M<:Mutable}(coll::BlobCollection{T,M}, mutability::Mutable) = coll
-as_immutable{T,M<:Immutable}(coll::BlobCollection{T,M}) = coll
+as_mutable(coll::BlobCollection{T,M}, mutability::Mutable) where {T, M<:Mutable} = coll
+as_immutable(coll::BlobCollection{T,M}) where {T, M<:Immutable} = coll
 
-as_immutable{T,M<:Mutable}(coll::BlobCollection{T,M}) = BlobCollection{T,Immutable}(coll.id, Immutable(), coll.reader, coll.nodemap, coll.blobs, coll.cache)
-as_mutable{T,M<:Immutable}(coll::BlobCollection{T,M}, mutability::Mutable) = BlobCollection{T,Immutable}(coll.id, mutability, coll.reader, coll.nodemap, coll.blobs, coll.cache)
+as_immutable(coll::BlobCollection{T,M}) where {T, M<:Mutable} = BlobCollection{T, Immutable}(coll.id, Immutable(), coll.reader, coll.nodemap, coll.blobs, coll.cache)
+as_mutable(coll::BlobCollection{T,M}, mutability::Mutable) where {T, M<:Immutable} = BlobCollection{T, Immutable}(coll.id, mutability, coll.reader, coll.nodemap, coll.blobs, coll.cache)
 
 # select a node local to the blob to fetch blob contents from
 select_local(coll::BlobCollection, blobid::UUID) = select_local(coll, coll.blobs[blobid])
@@ -313,7 +313,7 @@ function load_local(collid::UUID, blob::UUID)
     coll = BlobCollection(collid)
     load_local(coll, coll.blobs[blob])
 end
-function load_local{T}(coll::BlobCollection, blob::Blob{T})
+function load_local(coll::BlobCollection, blob::Blob{T}) where T
     if !haskey(coll.cache, blob.id)
         val = load(blob.metadata, coll.reader)
         blob.data.value = coll.cache[blob.id] = val
@@ -324,12 +324,12 @@ end
 
 load(collid::UUID, blobid::UUID) = load(BlobCollection(collid), blobid)
 load(coll::BlobCollection, blobid::UUID) = load(coll, coll.blobs[blobid])
-load{T,L<:WeakLocality}(coll::BlobCollection, blob::Blob{T,L}) = load_local(coll, blob)
-function load{T,L<:StrongLocality}(coll::BlobCollection, blob::Blob{T,L})
+load(coll::BlobCollection, blob::Blob{T,L}) where {T, L<:WeakLocality} = load_local(coll, blob)
+function load(coll::BlobCollection, blob::Blob{T,L}) where {T, L<:StrongLocality}
     if !haskey(coll.cache, blob.id)
         # select a node from blob's local nodes
         fetchfrom = select_local(coll, blob)
-        val = (fetchfrom == myid()) ? load_local(coll.id, blob.id) : remotecall_fetch(load_local, fetchfrom, coll.id, blob.id)
+        val = (fetchfrom === myid()) ? load_local(coll.id, blob.id) : remotecall_fetch(load_local, fetchfrom, coll.id, blob.id)
         blob.data.value = coll.cache[blob.id] = val
     end
     (coll.cache[blob.id])::T
@@ -337,7 +337,7 @@ end
 
 save(collid::UUID, blobid::UUID) = save(BlobCollection(collid), blobid)
 save(coll::BlobCollection, blobid::UUID) = save(coll, coll.blobs[blobid])
-function save{T,M<:Mutable}(coll::BlobCollection{T,M}, blob::Blob)
+function save(coll::BlobCollection{T,M}, blob::Blob) where {T,M<:Mutable}
     if haskey(coll.cache, blob.id)
         save(blob.data.value, blob.metadata, coll.mutability.writer)
     end
@@ -351,5 +351,5 @@ function flush(coll::BlobCollection, blob::Blob; callback::Bool=true)
     end
 end
 
-save{T,M<:Immutable}(coll::BlobCollection{T,M}, blobid::UUID) = nothing
-save{T,M<:Immutable}(coll::BlobCollection{T,M}, blob::Blob) = nothing
+save(coll::BlobCollection{T,M}, blobid::UUID) where {T, M<:Immutable} = nothing
+save(coll::BlobCollection{T,M}, blob::Blob) where {T, M<:Immutable} = nothing

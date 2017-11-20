@@ -1,15 +1,20 @@
 @everywhere using Blobs
-@everywhere using Base.Test
 @everywhere import Blobs: @logmsg, load
 include(joinpath(dirname(@__FILE__), "../examples/matrix.jl"))
+if (Base.VERSION < v"0.7.0-")
+@everywhere using Base.Test
 using MatrixBlobs
-using MatrixBlobs: load, splitidx
+else
+@everywhere using Test
+using .MatrixBlobs
+end
+import .MatrixBlobs: load, splitidx
 
 const FULLM = 10000
 const FULLN = 2000
 const DELTAM = 4000
 
-function make_sparse_blobs(sz::Tuple, sparsity::Float64, deltaN::Int, metadir::AbstractString)
+function make_sparse_blobs(sz::Tuple{Int,Int}, sparsity::Float64, deltaN::Int, metadir::String)
     spblobs = SparseMatBlobs(Float64, Int64, metadir)
     startidx = 1
     @logmsg("startidx:$startidx, sz:$sz")
@@ -61,7 +66,7 @@ function test_sparse_mat_blobs()
     println("time for $FULLM column getindex: $td")
 end
 
-function make_dense_mat_blobs(sz::Tuple, splitdim::Int, delta::Int, metadir::AbstractString)
+function make_dense_mat_blobs(sz::Tuple{Int,Int}, splitdim::Int, delta::Int, metadir::String)
     UD = (splitdim == 1) ? sz[2] : sz[1]
     SD = sz[splitdim]
     dmblobs = DenseMatBlobs(Int64, splitdim, UD, metadir)

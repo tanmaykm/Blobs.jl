@@ -2,10 +2,14 @@ __precompile__(true)
 
 module Blobs
 
-using Compat
-
 using Base.Random: UUID, uuid4
-using Base.Mmap: sync!
+if (Base.VERSION < v"0.7.0-")
+using Base.Mmap
+using Base.Mmap: sync!, MS_SYNC, MS_INVALIDATE
+else
+using Mmap
+using Mmap: sync!
+end
 using Base: IPAddr
 import Base: serialize, deserialize, append!, flush
 
@@ -20,11 +24,7 @@ export ProcessGlobalBlob
 export maxmem, maxcount
 
 # enable logging only during debugging
-if (Base.VERSION < v"0.5.0-")
-threadid() = 1
-else
 using Base.Threads
-end
 
 function tstr()
     t = time()

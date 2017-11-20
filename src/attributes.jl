@@ -2,22 +2,22 @@
 # Blob IO
 # Handles reading and writing from sources.
 # Writers are used only is blob is mutable.
-abstract BlobIO{T}
-type NoopBlobIO{T} <: BlobIO{T}
+abstract type BlobIO{T} end
+struct NoopBlobIO{T} <: BlobIO{T}
 end
 NoopBlobIO() = NoopBlobIO{Any}()
 
-immutable FileBlobIO{T} <: BlobIO{T}
+struct FileBlobIO{T} <: BlobIO{T}
     use_mmap::Bool
 end
-FileBlobIO{T}(::Type{T}, use_mmap::Bool=false) = FileBlobIO{T}(use_mmap)
+FileBlobIO(::Type{T}, use_mmap::Bool=false) where T = FileBlobIO{T}(use_mmap)
 
 def_fn_writer(b,p...) = throw(InvalidStateException("IO configured only as", :reader))
-immutable FunctionBlobIO{T} <: BlobIO{T}
+struct FunctionBlobIO{T} <: BlobIO{T}
     reader::Function
     writer::Function
 end
-FunctionBlobIO{T}(::Type{T}, reader::Function, writer::Function=def_fn_writer) = FunctionBlobIO{T}(reader, writer)
+FunctionBlobIO(::Type{T}, reader::Function, writer::Function=def_fn_writer) where T = FunctionBlobIO{T}(reader, writer)
 
 locality(io, nodemap=DEF_NODE_MAP) = locality(typeof(io), nodemap)
 
@@ -30,17 +30,17 @@ locality(io, nodemap=DEF_NODE_MAP) = locality(typeof(io), nodemap)
 defmutablespillcb(a...) = error("blob max size reached")
 defimmutablespillcb(a...) = error("blob is immutable")
 
-immutable Mutability{N}
+struct Mutability{N}
     maxsize::Int
     writer::BlobIO
     spillcb::Function
-    function Mutability(maxsize::Int=0, writer::BlobIO=NoopBlobIO(), spillcb::Function=(N==0)?defimmutablespillcb:defmutablespillcb)
+    function Mutability{N}(maxsize::Int=0, writer::BlobIO=NoopBlobIO(), spillcb::Function = (N==0) ? defimmutablespillcb : defmutablespillcb) where N
         new(maxsize, writer, spillcb)
     end
 end
 
-typealias Immutable    Mutability{false}
-typealias Mutable      Mutability{true}
+const Immutable  = Mutability{false}
+const Mutable    = Mutability{true}
 
 ##
 # Blobs can be located at one or more processes, or physical nodes.
@@ -54,15 +54,15 @@ typealias Mutable      Mutability{true}
 #     - can be accessed from anywhere
 #     - may be preferably on some nodes
 #     - generally backed by some kind of distributed/shared storage and are not affected by compute node failures
-type Locality{N}
+mutable struct Locality{N}
     nodes::Set{Int}
     ips::Set{IPAddr}
-    hostnames::Set{AbstractString}
+    hostnames::Set{String}
 
-    function Locality(locs...)
+    function Locality{N}(locs...) where N
         nodes = Set{Int}()
         ips = Set{IPAddr}()
-        hostnames = Set{AbstractString}()
+        hostnames = Set{String}()
         isempty(locs) && (locs = localto(myid()))
         for loc in locs
             isa(loc, Integer) ? push!(nodes, loc) :
@@ -72,8 +72,8 @@ type Locality{N}
     end
 end
 
-typealias WeakLocality      Locality{:weak}
-typealias StrongLocality    Locality{:strong}
+const WeakLocality    = Locality{:weak}
+const StrongLocality  = Locality{:strong}
 
 function islocal_broad(loc::Locality, attr)
     nodes, ips, hns = localto(attr)
@@ -81,7 +81,7 @@ function islocal_broad(loc::Locality, attr)
 end
 islocal(loc::Locality, nodeid::Int) = (nodeid in loc.nodes) || islocal_broad(loc, nodeid)
 islocal(loc::Locality, ip::IPAddr) = (ip in loc.ips) || islocal_broad(loc, ip)
-islocal(loc::Locality, hn::AbstractString) = (hn in loc.hostnames) || islocal_broad(loc, hn)
+islocal(loc::Locality, hn::String) = (hn in loc.hostnames) || islocal_broad(loc, hn)
 
 
 ##
@@ -93,19 +93,19 @@ islocal(loc::Locality, hn::AbstractString) = (hn in loc.hostnames) || islocal_br
 # A node map holds a mapping of the node to the IP address / hostname of the physical machine it is currently running on.
 # This is used to map affinities to nodes and facilitate data movement.
  
-type Node
+mutable struct Node
     nodeid::Int
     ips::Vector{IPAddr}
-    hostnames::Vector{AbstractString}
+    hostnames::Vector{String}
 end
 
-type NodeMap
+mutable struct NodeMap
     props::Dict{Int,Node}
     ipgroup::Dict{IPAddr,Vector{Int}}
-    hostnamegroup::Dict{AbstractString,Vector{Int}}
+    hostnamegroup::Dict{String,Vector{Int}}
 
     function NodeMap()
-        new(Dict{Int,Node}(), Dict{IPAddr,Vector{Int}}(), Dict{AbstractString,Vector{Int}}())
+        new(Dict{Int,Node}(), Dict{IPAddr,Vector{Int}}(), Dict{String,Vector{Int}}())
     end
 end
 
@@ -139,11 +139,11 @@ end
 
 # localto methods can be used to get a list of nodes, ips, hostnames that are local to the given entity as per the nodemap
 localto(ip::IPAddr, nodemap::NodeMap=DEF_NODE_MAP) = localto(get(nodemap.ipgroup, ip, Int[]), nodemap)
-localto(hostname::AbstractString, nodemap::NodeMap=DEF_NODE_MAP) = localto(get(nodemap.hostnamegroup, hostname, Int[]), nodemap)
+localto(hostname::String, nodemap::NodeMap=DEF_NODE_MAP) = localto(get(nodemap.hostnamegroup, hostname, Int[]), nodemap)
 function localto(nodeids::Vector{Int}, nodemap::NodeMap=DEF_NODE_MAP)
-    isempty(nodeids) ? (Int[], IPAddr[], AbstractString[]) : localto(nodeids[1], nodemap)
+    isempty(nodeids) ? (Int[], IPAddr[], String[]) : localto(nodeids[1], nodemap)
 end
-function _addnode(nodemap::NodeMap, nodes::Set{Int}, ips::Set{IPAddr}, hns::Set{AbstractString}, nodeid::Int)
+function _addnode(nodemap::NodeMap, nodes::Set{Int}, ips::Set{IPAddr}, hns::Set{String}, nodeid::Int)
     attr = nodemap.props[nodeid]
     push!(nodes, nodeid)
     for ip in attr.ips
@@ -156,7 +156,7 @@ end
 function localto(nodeid::Int, nodemap::NodeMap=DEF_NODE_MAP)
     nodes = Set{Int}(nodeid)
     ips = Set{IPAddr}()
-    hns = Set{AbstractString}()
+    hns = Set{String}()
 
     if nodeid in keys(nodemap.props)
         myattr = nodemap.props[nodeid]

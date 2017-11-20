@@ -1,14 +1,18 @@
 @everywhere using Blobs
-@everywhere using Base.Test
 @everywhere import Blobs: @logmsg
+if (Base.VERSION < v"0.7.0-")
+@everywhere using Base.Test
+else
+@everywhere using Test
+end
 
-function create_rand_file_backed_blob{T,L}(::Type{T}, ::Type{L}, sz::Int, nodeid::Int)
+function create_rand_file_backed_blob(::Type{T}, ::Type{L}, sz::Int, nodeid::Int) where {T, L}
     VT = Vector{T}
     meta = TypedMeta(FileBlobIO{VT} => FileMeta(tempname(), 0, sizeof(T)*sz), FunctionBlobIO{VT} => FunctionMeta((sizeof(T)*sz,)))
     Blob(VT, L, meta, nodeid)
 end
 
-function create_blob_collection{T,L}(::Type{T}, ::Type{L}, sz::Int)
+function create_blob_collection(::Type{T}, ::Type{L}, sz::Int) where {T, L}
     VT = Vector{T}
     # have a random number generator as reader and save to file
     mut = Mutable(sz*sizeof(T), FileBlobIO(VT))
@@ -39,7 +43,7 @@ function create_blob_collection{T,L}(::Type{T}, ::Type{L}, sz::Int)
     bcfile, coll
 end
 
-function read_blob_collection{T,L}(::Type{T}, ::Type{L}, sz::Int, bcfile)
+function read_blob_collection(::Type{T}, ::Type{L}, sz::Int, bcfile) where {T, L}
     VT = Vector{T}
     coll = load(BlobCollection(VT, Immutable(sz*sizeof(T)), FileBlobIO(VT)), bcfile)
     register(coll, workers())
@@ -58,20 +62,24 @@ function read_blob_collection{T,L}(::Type{T}, ::Type{L}, sz::Int, bcfile)
     coll
 end
 
-function cleanup_blob_collection{T}(::Type{T}, bcfile::AbstractString, coll::BlobCollection)
+function cleanup_blob_collection(::Type{T}, bcfile::String, coll::BlobCollection) where T
     VT = Vector{T}
     @logmsg("cleaning up...")
     for blobid in blobids(coll)
         blob = coll.blobs[blobid]
         meta = blob.metadata.metadict[FileBlobIO{VT}]
-        rm(meta.filename)
-        @logmsg("cleaned up blob $(meta.filename)")
+        if isfile(meta.filename)
+            rm(meta.filename)
+            @logmsg("cleaned up blob $(meta.filename)")
+        else
+            @logmsg("not cleaning up blob $(meta.filename) (was not found)")
+        end
     end
     rm(bcfile)
     @logmsg("cleaned up blobs")
 end
 
-function test_blob{T,L}(::Type{T}, ::Type{L}, sz::Int)
+function test_blob(::Type{T}, ::Type{L}, sz::Int) where {T, L}
     bcfile, coll = create_blob_collection(T, L, sz)         # create blob collection
     deregister(coll, procs())                               # deregister blob collection
     coll = read_blob_collection(T, L, sz, bcfile)           # restore the saved blob collection
