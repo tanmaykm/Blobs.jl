@@ -1,5 +1,9 @@
 using Blobs
+if (Base.VERSION < v"0.7.0-")
 using Base.Test
+else
+using Test
+end
 
 const iplist1 = [ip"54.204.24.10", ip"54.204.24.11"]
 const iplist2 = [ip"54.204.24.20", ip"54.204.24.21"]

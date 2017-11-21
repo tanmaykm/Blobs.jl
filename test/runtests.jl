@@ -1,5 +1,9 @@
 using Blobs
+if (Base.VERSION < v"0.7.0-")
 using Base.Test
+else
+using Test
+end
 
 println("testing attributes...")
 include("test_attributes.jl")

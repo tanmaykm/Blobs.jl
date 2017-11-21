@@ -10,7 +10,7 @@ const BSZ = 128*1024*1024
 #const BSZ = 12*1024*1024
 const NBLKS = 10
 
-function test_hdfs_multiple_small_files(hdfsuri::AbstractString)
+function test_hdfs_multiple_small_files(hdfsuri::String)
     T = Vector{Float64}
     io = HDFSBlobIO(T, hdfsuri)
     N = round(Int, BSZ / sizeof(Float64))
@@ -46,7 +46,7 @@ function test_hdfs_multiple_small_files(hdfsuri::AbstractString)
     @test_approx_eq check_sum verify_sum
 end
 
-function test_hdfs_single_large_file(hdfsuri::AbstractString)
+function test_hdfs_single_large_file(hdfsuri::String)
     T = Vector{Float64}
     io = HDFSBlobIO(T, hdfsuri)
     N = round(Int, BSZ / sizeof(Float64))
@@ -86,7 +86,7 @@ function test_hdfs_single_large_file(hdfsuri::AbstractString)
     @test_approx_eq check_sum verify_sum
 end
 
-function test_local_single_large_file(fileuri::AbstractString)
+function test_local_single_large_file(fileuri::String)
     T = Vector{Float64}
     N = round(Int, BSZ / sizeof(Float64))
 
@@ -121,7 +121,7 @@ function test_local_single_large_file(fileuri::AbstractString)
     @test_approx_eq check_sum verify_sum
 end
 
-function delete_test_files(hdfsuri::AbstractString)
+function delete_test_files(hdfsuri::String)
     @logmsg("deleting all test files")
     for idx in 1:NBLKS
         hfile = joinpath(HDFSFile(hdfsuri), "$idx")

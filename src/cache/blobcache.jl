@@ -8,16 +8,15 @@ include("list.jl")
 const __MAXCACHE__ = 100
 noop(k,v) = nothing
 
-type LRU{K,V} <: Associative{K,V}
+mutable struct LRU{K,V} <: Associative{K,V}
     ht::Dict{K, LRUNode{K, V}}
     q::LRUList{K, V}
     maxsize::Int
     cb::Function
     isfull::Function
-
-    LRU(m::Int=__MAXCACHE__; callback::Function=noop, strategy::Function=maxcount) = new(Dict{K, V}(), LRUList{K, V}(), m, callback, strategy)
 end
 LRU(m::Int=__MAXCACHE__) = LRU{Any, Any}(m)
+LRU{K,V}(m::Int=__MAXCACHE__; callback::Function=noop, strategy::Function=maxcount) where {K,V} = LRU{K,V}(Dict{K, V}(), LRUList{K, V}(), m, callback, strategy)
 
 function maxcount(lru::LRU)
     length(lru) > lru.maxsize
@@ -31,7 +30,7 @@ function maxmem(lru::LRU)
     memused > lru.maxsize
 end
 
-Base.show{K, V}(io::IO, lru::LRU{K, V}) = print(io,"LRU{$K, $V}($(lru.maxsize) $(lru.isfull))")
+Base.show(io::IO, lru::LRU{K, V}) where {K, V} = print(io,"LRU{$K, $V}($(lru.maxsize) $(lru.isfull))")
 
 Base.start(lru::LRU) = start(lru.ht)
 Base.next(lru::LRU, state) = next(lru.ht, state)
@@ -56,7 +55,7 @@ macro get!(lru, key, default)
     end
 end
 
-function Base.get!{K,V}(default::Base.Callable, lru::LRU{K, V}, key::K)
+function Base.get!(default::Base.Callable, lru::LRU{K, V}, key::K) where {K, V}
     if haskey(lru, key)
         return lru[key]
     else
@@ -66,7 +65,7 @@ function Base.get!{K,V}(default::Base.Callable, lru::LRU{K, V}, key::K)
     end
 end
 
-function Base.get!{K,V}(lru::LRU{K,V}, key::K, default::V)
+function Base.get!(lru::LRU{K,V}, key::K, default::V) where {K, V}
     if haskey(lru, key)
         return lru[key]
     else
@@ -81,7 +80,7 @@ function Base.getindex(lru::LRU, key)
     return node.v
 end
 
-function Base.setindex!{K, V}(lru::LRU{K, V}, v, key)
+function Base.setindex!(lru::LRU{K, V}, v, key) where {K, V}
     if haskey(lru, key)
         item = lru.ht[key]
         item.v = v
